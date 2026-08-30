@@ -1825,6 +1825,13 @@ test('index.html carries the accessibility and motion guarantees in its own CSS'
   ok(/prefers-contrast|forced-colors/.test(html), 'high contrast is considered');
 });
 
+test('pause suspends a pending machine reply and resumes it only after the dialog closes', () => {
+  const html = readShipped('index.html');
+  ok(/function pauseGame\(\)[\s\S]*?clearTimeout\(ui\.aiTimer\)[\s\S]*?ui\.aiTimer\s*=\s*0/.test(html), 'pause must cancel the pending AI timer');
+  ok(/function resumeAfterPause\(\)[\s\S]*?state\.mode === 'SOLO'[\s\S]*?state\.toMove === 'I'[\s\S]*?scheduleAI\(\)/.test(html), 'closing pause must resume an interrupted AI turn');
+  ok(/\$\('pause-dialog'\)\.addEventListener\('close', resumeAfterPause\)/.test(html), 'all dialog close paths must resume consistently');
+});
+
 test('index.html drives the real engine rules, not a decorative mock', () => {
   const html = readShipped('index.html');
   for (const symbol of [

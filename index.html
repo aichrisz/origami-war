@@ -1125,10 +1125,24 @@ $('board').addEventListener('click', (event) => {
   renderStatus(mirror);
 });
 
-$('pause').addEventListener('click', () => {
+function pauseGame() {
+  window.clearTimeout(ui.aiTimer);
+  ui.aiTimer = 0;
   if (typeof $('pause-dialog').showModal === 'function') $('pause-dialog').showModal();
-});
+}
+
+function resumeAfterPause() {
+  if (
+    ui.state.status === 'ACTIVE' &&
+    ui.state.mode === 'SOLO' &&
+    ui.state.toMove === 'I' &&
+    !ui.busy
+  ) scheduleAI();
+}
+
+$('pause').addEventListener('click', pauseGame);
 $('pause-close').addEventListener('click', () => $('pause-dialog').close());
+$('pause-dialog').addEventListener('close', resumeAfterPause);
 
 $('help').addEventListener('click', () => {
   if (typeof $('help-dialog').showModal === 'function') $('help-dialog').showModal();

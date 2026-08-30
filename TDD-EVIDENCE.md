@@ -14,8 +14,8 @@ Command is always `node verify.mjs` from the repository root.
 
 ```
 Error [ERR_MODULE_NOT_FOUND]: Cannot find module
-  '/root/projects/origami-war/engine.mjs' imported from
-  /root/projects/origami-war/verify.mjs
+  '<repo>/engine.mjs' imported from
+  <repo>/verify.mjs
   code: 'ERR_MODULE_NOT_FOUND'
 ```
 
@@ -341,11 +341,11 @@ total tests_failed=8
 FAILED the repository ships only the allowed dependency-free files
   missing required file: index.html
 FAILED index.html is a single offline page that imports the engine
-  ENOENT: no such file or directory, open '/root/projects/origami-war/index.html'
+  ENOENT: no such file or directory, open '<repo>/index.html'
 FAILED index.html drives the real engine rules, not a decorative mock
-  ENOENT: no such file or directory, open '/root/projects/origami-war/index.html'
+  ENOENT: no such file or directory, open '<repo>/index.html'
 FAILED README documents the rules, the tests and the deterministic model honestly
-  ENOENT: no such file or directory, open '/root/projects/origami-war/README.md'
+  ENOENT: no such file or directory, open '<repo>/README.md'
 RESULT: FAIL (8 failing, 124 passing)
 ```
 
@@ -433,3 +433,33 @@ deterministic AI; replay equality; share-string validation and corruption
 rejection; property sweeps and bounded self-play; pure view-model helpers;
 interface plus static release scans; public-surface cleanup; capped-tie
 initiative.
+
+---
+
+## RED 19 — repair: pause must suspend a pending machine reply
+
+- UTC: 2026-08-30T21:40:57Z
+- Command: `node verify.mjs`
+- Exit code: 1
+
+```
+FAILED pause suspends a pending machine reply and resumes it only after the dialog closes
+  pause must cancel the pending AI timer
+RESULT: FAIL (1 failing, 133 passing)
+```
+
+Expected: the pause dialog was visual only; it did not cancel a pending solo AI
+timer or resume that turn after every close path. The repair must make the
+literal pause promise true without changing game rules.
+
+---
+
+## GREEN — independently repaired pause behavior
+
+- UTC: 2026-08-30T21:43:04Z
+- Command: `node verify.mjs`
+- Exit code: 0
+- Result: `RESULT: PASS (134 passing, 0 failing)`, nothing written to stderr.
+- Browser proof: while Indigo's opening reply was pending, Pause held the match
+  at action 0 beyond the AI delay; closing the dialog resumed exactly one reply
+  and reached action 1.
