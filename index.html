@@ -1,0 +1,1226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ORIGAMI//WAR — a deterministic paper-folding duel</title>
+<meta name="description" content="A deterministic two-player paper-folding duel. Fold a 5x5 sheet to bring blades into contact and crush the enemy core. Offline, no accounts, no network.">
+<meta name="color-scheme" content="dark">
+<style>
+:root{
+  --ink:#0b0c0e;
+  --ink-soft:#15171b;
+  --ink-line:#2a2e36;
+  --paper:#f4ecd8;
+  --paper-back:#ded2b4;
+  --paper-edge:#b8a87e;
+  --vermilion:#d6431f;
+  --vermilion-ink:#3d0f05;
+  --indigo:#3a4fd8;
+  --indigo-ink:#0a1140;
+  --chalk:#eae4d6;
+  --chalk-dim:#a29c8f;
+  --focus:#ffd24a;
+  --cell:clamp(44px,16.5vw,62px);
+  --gap:clamp(2px,0.8vw,5px);
+  --pad:clamp(8px,3vw,18px);
+  --radius:3px;
+  --fold-ms:420ms;
+  --cut-ms:640ms;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  padding:0 0 env(safe-area-inset-bottom);
+  background:var(--ink);
+  color:var(--chalk);
+  font:16px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  background-image:
+    repeating-linear-gradient(90deg,rgba(255,255,255,.014) 0 1px,transparent 1px 3px),
+    repeating-linear-gradient(0deg,rgba(255,255,255,.010) 0 1px,transparent 1px 4px);
+  overflow-wrap:break-word;
+}
+.skip{position:absolute;left:-9999px;top:0;background:var(--focus);color:var(--ink);padding:10px;z-index:50}
+.skip:focus{left:8px;top:8px}
+header{padding:var(--pad) var(--pad) 0}
+h1{
+  margin:0;
+  font-size:clamp(1.35rem,7.5vw,2.1rem);
+  letter-spacing:.12em;
+  font-weight:700;
+}
+h1 .slash{color:var(--vermilion)}
+h1 .war{color:var(--chalk)}
+.tagline{margin:.35rem 0 0;color:var(--chalk-dim);font-size:.82rem;letter-spacing:.04em}
+main{padding:var(--pad);display:grid;gap:var(--pad);max-width:44rem;margin:0 auto}
+section{
+  border:1px solid var(--ink-line);
+  background:linear-gradient(180deg,var(--ink-soft),#101216);
+  padding:var(--pad);
+  border-radius:var(--radius);
+}
+h2{margin:0 0 .5rem;font-size:.78rem;letter-spacing:.22em;text-transform:uppercase;color:var(--chalk-dim)}
+h3{margin:.6rem 0 .3rem;font-size:.74rem;letter-spacing:.16em;text-transform:uppercase;color:var(--chalk-dim)}
+p{margin:.4rem 0}
+button{
+  font:inherit;
+  font-size:.86rem;
+  min-height:44px;
+  min-width:44px;
+  padding:.5rem .7rem;
+  color:var(--chalk);
+  background:#1d2027;
+  border:1px solid var(--ink-line);
+  border-radius:var(--radius);
+  cursor:pointer;
+  text-align:left;
+  touch-action:manipulation;
+}
+button:hover:not(:disabled){border-color:var(--chalk-dim)}
+button:disabled{opacity:.42;cursor:not-allowed}
+button.primary{background:var(--vermilion);border-color:#f0613a;color:#fff;font-weight:700}
+button.ghost{background:transparent}
+:focus-visible{outline:3px solid var(--focus);outline-offset:2px}
+input[type=text]{
+  font:inherit;
+  min-height:44px;
+  width:100%;
+  padding:.45rem .55rem;
+  color:var(--chalk);
+  background:#0d0f13;
+  border:1px solid var(--ink-line);
+  border-radius:var(--radius);
+}
+label{font-size:.8rem;color:var(--chalk-dim);display:block;margin-bottom:.2rem}
+fieldset{border:1px solid var(--ink-line);border-radius:var(--radius);margin:.6rem 0;padding:.5rem .6rem}
+legend{font-size:.72rem;letter-spacing:.16em;text-transform:uppercase;color:var(--chalk-dim);padding:0 .3rem}
+fieldset label{display:flex;align-items:center;gap:.5rem;min-height:44px;margin:0;color:var(--chalk);font-size:.86rem}
+input[type=radio]{width:20px;height:20px;accent-color:var(--vermilion)}
+.row{display:flex;flex-wrap:wrap;gap:.5rem}
+.row>*{flex:1 1 8.5rem}
+.grid2{display:grid;gap:.5rem;grid-template-columns:repeat(auto-fit,minmax(8.5rem,1fr))}
+
+/* ---------- board ---------- */
+.board-wrap{perspective:900px;display:flex;justify-content:center;padding:.4rem 0}
+#board{
+  display:grid;
+  grid-template-columns:repeat(5,var(--cell));
+  grid-template-rows:repeat(5,var(--cell));
+  gap:var(--gap);
+  transform-style:preserve-3d;
+}
+.sq{
+  position:relative;
+  width:var(--cell);
+  height:var(--cell);
+  min-width:0;
+  min-height:0;
+  padding:0;
+  border:1px solid transparent;
+  background:transparent;
+  display:grid;
+  place-items:center;
+  overflow:visible;
+}
+.sq.empty{border:1px dashed #23262d;background:repeating-linear-gradient(45deg,#101217 0 3px,#0c0e12 3px 6px)}
+.paper{
+  position:absolute;
+  inset:0;
+  border:1px solid var(--paper-edge);
+  border-radius:2px;
+  background-color:var(--paper);
+  background-image:
+    repeating-linear-gradient(74deg,rgba(120,100,60,.10) 0 1px,transparent 1px 4px),
+    repeating-linear-gradient(14deg,rgba(120,100,60,.07) 0 1px,transparent 1px 5px),
+    radial-gradient(120% 120% at 22% 14%,rgba(255,255,255,.5),transparent 62%);
+  box-shadow:0 1px 0 rgba(0,0,0,.55),0 3px 6px rgba(0,0,0,.5);
+  transform-style:preserve-3d;
+}
+.paper.back{
+  background-color:var(--paper-back);
+  background-image:
+    repeating-linear-gradient(106deg,rgba(90,70,35,.16) 0 1px,transparent 1px 4px),
+    radial-gradient(120% 120% at 78% 82%,rgba(255,255,255,.28),transparent 60%);
+}
+.layers{position:absolute;right:2px;top:1px;font-size:.52rem;color:#6d6248;letter-spacing:.02em}
+.mark{
+  position:relative;
+  display:grid;
+  place-items:center;
+  width:74%;
+  height:74%;
+  font-size:.72rem;
+  font-weight:700;
+  letter-spacing:.02em;
+}
+.mark .glyph{font-size:1.5rem;line-height:1}
+.mark.V{color:var(--vermilion-ink)}
+.mark.I{color:var(--indigo-ink)}
+.mark.V .glyph{color:var(--vermilion)}
+.mark.I .glyph{color:var(--indigo)}
+.mark .tag{position:absolute;bottom:-2px;right:-1px;font-size:.56rem;color:#4a4232}
+.mark.dead{opacity:.28;text-decoration:line-through}
+.hp{position:absolute;left:1px;bottom:0;font-size:.56rem;letter-spacing:.08em}
+.crease{position:absolute;inset:0;pointer-events:none}
+.crease::after{content:"";position:absolute;inset:0;background:
+  repeating-linear-gradient(0deg,transparent 0 calc(50% - 1px),rgba(90,70,35,.22) 50%,transparent calc(50% + 1px) 100%)}
+.sq.flap .paper{outline:2px solid var(--vermilion);outline-offset:-2px}
+.sq.dest .paper,.sq.dest.empty{outline:2px dashed var(--focus);outline-offset:-2px}
+.sq.threat::after{
+  content:"!";
+  position:absolute;
+  top:-2px;
+  left:-2px;
+  font-size:.68rem;
+  font-weight:700;
+  color:var(--ink);
+  background:var(--focus);
+  border-radius:50%;
+  width:14px;
+  height:14px;
+  display:grid;
+  place-items:center;
+}
+.sq.sel .paper{box-shadow:0 0 0 2px var(--chalk),0 3px 6px rgba(0,0,0,.5)}
+.sq.hinge .paper{
+  transform-origin:var(--hx,50%) var(--hy,50%);
+  animation:hinge var(--fold-ms) ease-in-out 1;
+}
+@keyframes hinge{
+  0%{transform:rotate3d(var(--rx,0),var(--ry,1),0,0deg)}
+  55%{transform:rotate3d(var(--rx,0),var(--ry,1),0,-104deg) translateZ(10px)}
+  100%{transform:rotate3d(var(--rx,0),var(--ry,1),0,-180deg)}
+}
+
+/* ---------- action list ---------- */
+#actions{display:grid;gap:.4rem}
+#actions button{display:block;width:100%}
+#actions button .k{color:var(--chalk-dim);font-size:.72rem;letter-spacing:.1em;margin-right:.45rem}
+#actions button.strike{border-left:3px solid var(--vermilion)}
+#actions button.fold{border-left:3px solid var(--indigo)}
+#preview{
+  margin:.55rem 0 0;
+  padding:.5rem .6rem;
+  border:1px dashed var(--ink-line);
+  border-radius:var(--radius);
+  font-size:.8rem;
+  color:var(--chalk-dim);
+  min-height:4.4rem;
+}
+#preview b{color:var(--chalk);font-weight:700}
+#preview ul{margin:.3rem 0 0;padding-left:1.1rem}
+
+/* ---------- status, mirror, history ---------- */
+#status{
+  font-size:.85rem;
+  padding:.5rem .6rem;
+  border:1px solid var(--ink-line);
+  border-left:3px solid var(--focus);
+  border-radius:var(--radius);
+  background:#0d0f13;
+}
+.meters{display:grid;gap:.35rem;grid-template-columns:1fr 1fr;margin-top:.5rem;font-size:.76rem}
+.meter{border:1px solid var(--ink-line);padding:.35rem .45rem;border-radius:var(--radius)}
+.meter.V{border-left:3px solid var(--vermilion)}
+.meter.I{border-left:3px solid var(--indigo)}
+.meter dt{color:var(--chalk-dim);font-size:.7rem;letter-spacing:.1em;text-transform:uppercase}
+.meter dd{margin:.15rem 0 0}
+#mirror,#history{list-style:none;margin:0;padding:0;display:grid;gap:.3rem;font-size:.76rem}
+#mirror li,#history li{border:1px solid var(--ink-line);border-radius:var(--radius);padding:.35rem .45rem;background:#0d0f13}
+#mirror li.V{border-left:3px solid var(--vermilion)}
+#mirror li.I{border-left:3px solid var(--indigo)}
+details{border:1px solid var(--ink-line);border-radius:var(--radius);padding:.4rem .5rem;margin-top:.5rem}
+summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-size:.8rem;letter-spacing:.06em}
+.hint{font-size:.74rem;color:var(--chalk-dim)}
+.share-box{display:grid;gap:.4rem}
+
+/* ---------- dialogs & cut-ins ---------- */
+dialog{
+  border:1px solid var(--ink-line);
+  border-radius:var(--radius);
+  background:#12141a;
+  color:var(--chalk);
+  max-width:min(34rem,94vw);
+  padding:var(--pad);
+}
+dialog::backdrop{background:rgba(4,5,7,.82)}
+dialog h2{margin-top:0}
+dialog ul{padding-left:1.1rem}
+#cutin{
+  position:fixed;
+  inset:0;
+  display:grid;
+  place-items:center;
+  pointer-events:none;
+  z-index:40;
+}
+#cutin span{
+  font-size:clamp(1.6rem,11vw,3.2rem);
+  font-weight:700;
+  letter-spacing:.2em;
+  padding:.2em .5em;
+  color:var(--paper);
+  background:linear-gradient(100deg,rgba(214,67,31,.94),rgba(11,12,14,.92));
+  border-left:6px solid var(--focus);
+  transform:translateX(-8%) skewX(-9deg);
+  animation:cut var(--cut-ms) ease-out 1 both;
+}
+#cutin.indigo span{background:linear-gradient(100deg,rgba(58,79,216,.94),rgba(11,12,14,.92))}
+@keyframes cut{
+  0%{opacity:0;transform:translateX(-38%) skewX(-9deg)}
+  22%{opacity:1;transform:translateX(-8%) skewX(-9deg)}
+  74%{opacity:1;transform:translateX(-8%) skewX(-9deg)}
+  100%{opacity:0;transform:translateX(6%) skewX(-9deg)}
+}
+[hidden]{display:none !important}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+footer{padding:0 var(--pad) var(--pad);color:var(--chalk-dim);font-size:.72rem;max-width:44rem;margin:0 auto}
+
+@media (max-width:340px){
+  :root{--cell:44px;--gap:2px;--pad:7px}
+  h1{letter-spacing:.06em}
+  .meters{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){
+  .sq.hinge .paper{animation:none}
+  #cutin span{animation:none}
+  *{transition:none !important}
+}
+@media (prefers-contrast:more){
+  :root{--chalk-dim:#d8d2c4;--ink-line:#5a606c}
+  .paper{border-width:2px}
+}
+@media (forced-colors:active){
+  .paper{border:2px solid CanvasText;background:Canvas}
+  .mark{color:CanvasText}
+  button{border:1px solid ButtonText}
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#board-h">Skip to the board</a>
+
+<header>
+  <h1><span class="war">ORIGAMI</span><span class="slash">//</span><span class="war">WAR</span></h1>
+  <p class="tagline">Fold the sheet. Force contact. Crush the core.</p>
+</header>
+
+<main>
+  <section aria-labelledby="status-h">
+    <h2 id="status-h">Situation</h2>
+    <p id="status" role="status" aria-live="polite">Loading the sheet&hellip;</p>
+    <dl class="meters" id="meters"></dl>
+    <div class="row" style="margin-top:.6rem">
+      <button id="undo" type="button" disabled>Undo (unanswered only)</button>
+      <button id="pass-ready" type="button" hidden>Hand over &amp; continue</button>
+      <button id="pause" type="button" class="ghost">Pause</button>
+      <button id="help" type="button" class="ghost">Rules &amp; help</button>
+    </div>
+  </section>
+
+  <section aria-labelledby="board-h">
+    <h2 id="board-h">Board</h2>
+    <div class="board-wrap">
+      <div id="board" role="group" aria-labelledby="board-h" aria-describedby="board-hint"></div>
+    </div>
+    <p id="board-hint" class="hint">
+      Each square is one stack of paper. Numbers show layer count, glyphs show the top live unit:
+      &#9670; core, &#9650; blade, letter V for Vermilion, I for Indigo. Squares are buttons; activating
+      one reads its full stack aloud in the situation line.
+    </p>
+  </section>
+
+  <section aria-labelledby="actions-h">
+    <h2 id="actions-h">Your action</h2>
+    <p class="hint" id="actions-hint">
+      One action per turn: a fold or a strike. Focus or hover a fold to preview it before committing.
+    </p>
+    <div id="actions" role="group" aria-labelledby="actions-h" aria-describedby="actions-hint"></div>
+    <div id="preview" aria-live="polite"></div>
+  </section>
+
+  <section aria-labelledby="mirror-h">
+    <h2 id="mirror-h">Text mirror of the paper</h2>
+    <ul id="mirror" aria-labelledby="mirror-h"></ul>
+  </section>
+
+  <section aria-labelledby="match-h">
+    <h2 id="match-h">Match setup</h2>
+    <form id="setup-form" novalidate>
+      <div class="grid2">
+        <div>
+          <label for="seed">Seed (integer 0&ndash;4294967295)</label>
+          <input id="seed" name="seed" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="1">
+        </div>
+        <fieldset>
+          <legend>Mode</legend>
+          <label><input type="radio" name="mode" value="SOLO" checked> Solo vs machine</label>
+          <label><input type="radio" name="mode" value="PASS"> Pass and play</label>
+        </fieldset>
+      </div>
+      <div class="row" style="margin-top:.6rem">
+        <button id="new-game" type="submit" class="primary">Start new game</button>
+        <button id="replay-seed" type="button">Replay same seed</button>
+        <button id="random-seed" type="button">Pick a seed</button>
+      </div>
+    </form>
+    <details>
+      <summary>Share, verify and export</summary>
+      <div class="share-box">
+        <div>
+          <label for="share-text">Result string for this match</label>
+          <input id="share-text" type="text" readonly value="">
+        </div>
+        <div class="row">
+          <button id="copy-share" type="button">Copy result string</button>
+          <button id="export-png" type="button">Export board PNG</button>
+        </div>
+        <div>
+          <label for="verify-input">Check a result string</label>
+          <input id="verify-input" type="text" autocomplete="off" spellcheck="false" placeholder="OW1-...">
+        </div>
+        <div class="row">
+          <button id="verify-btn" type="button">Validate string</button>
+          <button id="load-btn" type="button">Load as replay</button>
+        </div>
+        <p id="verify-out" class="hint" aria-live="polite"></p>
+      </div>
+    </details>
+  </section>
+
+  <section aria-labelledby="history-h">
+    <h2 id="history-h">Local match history</h2>
+    <ul id="history" aria-labelledby="history-h"></ul>
+    <div class="row" style="margin-top:.5rem">
+      <button id="clear-history" type="button" class="ghost">Clear local history</button>
+    </div>
+    <p class="hint">Kept in this browser only, newest first, never more than <span id="history-limit"></span> matches. No names, no accounts, no network.</p>
+  </section>
+</main>
+
+<footer>
+  <p>Deterministic model, not physically accurate origami. Runs entirely offline: no network calls, no external assets, no trackers, no accounts.</p>
+</footer>
+
+<div id="cutin" hidden><span></span></div>
+
+<dialog id="outcome-dialog" aria-labelledby="outcome-h">
+  <h2 id="outcome-h">Match over</h2>
+  <p id="outcome-body"></p>
+  <p id="outcome-share" class="hint"></p>
+  <div class="row">
+    <button id="outcome-again" type="button" class="primary">New seed</button>
+    <button id="outcome-replay" type="button">Same seed again</button>
+    <button id="outcome-close" type="button" class="ghost">Close</button>
+  </div>
+</dialog>
+
+<dialog id="pause-dialog" aria-labelledby="pause-h">
+  <h2 id="pause-h">Paused</h2>
+  <p>The match is deterministic and waits for you. Nothing is running in the background.</p>
+  <div class="row"><button id="pause-close" type="button" class="primary">Resume</button></div>
+</dialog>
+
+<dialog id="help-dialog" aria-labelledby="help-h">
+  <h2 id="help-h">Rules &amp; controls</h2>
+  <h3>Goal</h3>
+  <p>Each side holds one core (integrity 2) and three blades pinned to paper cells. Take the enemy core to integrity 0 and you win at once.</p>
+  <h3>The sheet</h3>
+  <p>A 5&times;5 sheet of 25 immutable paper cells. Folding reflects a flap across an integer crease, flips every moved cell over, reverses the flap's layer order and lays it on top. Paper cells never move relative to their units; only the paper does.</p>
+  <h3>Actions</h3>
+  <ul>
+    <li><b>Fold</b> &mdash; costs one of your three fold tokens. Legal only if the reflected flap lands inside the stationary sheet and covers part of it.</li>
+    <li><b>Strike</b> &mdash; free. A live unit hits a live enemy in the same stack, or in an orthogonally adjacent stack. Blades are captured; cores lose one integrity.</li>
+  </ul>
+  <h3>Ending</h3>
+  <p>Core captured wins immediately. Otherwise the match ends at 24 committed actions (or when a side has no legal action at all) and is decided on core integrity, then surviving blades, then controlled top faces, then the seeded initiative, which belongs to the side that opened.</p>
+  <h3>Controls</h3>
+  <ul>
+    <li>Tab and arrow keys reach every control; Enter or Space activates.</li>
+    <li>Focus or hover a fold button to see the flap, its destination, its travel direction, the resulting layering and the strike contacts it would create.</li>
+    <li>Undo is offered only while your action is still unanswered: before the machine replies in solo, and before you hand the device over in pass and play. It reverts the whole action.</li>
+  </ul>
+  <h3>The machine opponent</h3>
+  <p id="ai-note"></p>
+  <div class="row"><button id="help-close" type="button" class="primary">Back to the match</button></div>
+</dialog>
+
+<canvas id="export-canvas" width="720" height="820" hidden aria-hidden="true"></canvas>
+
+<script type="module">
+import {
+  TURN_CAP, FOLD_TOKENS, HISTORY_LIMIT, VERSION,
+  createGame, commitAction, chooseAction, legalActions, checkAction,
+  previewFold, boardMirror, describeAction, actionKey,
+  serializeMatch, parseMatch, replay, actionLog,
+  fairUndo, undoAvailable, matchRecord, pushMatchRecord,
+  aiExplain, sideName, unitLabel, paperOf,
+  AI_ACTION_LIMIT,
+} from './engine.mjs';
+
+const $ = (id) => document.getElementById(id);
+const el = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const HISTORY_KEY = 'origami-war/history/v1';
+const AI_DELAY_MS = 460;
+const CELL_PX = 128;
+
+const ui = {
+  state: null,
+  undoArmed: false,
+  handoffPending: false,
+  busy: false,
+  selected: null,
+  aiTimer: 0,
+  cutTimer: 0,
+  history: [],
+  lastNote: '',
+  pendingNote: '',
+  gen: 0,
+};
+
+/* ------------------------------------------------------------ local history */
+function loadHistory() {
+  try {
+    const raw = window.localStorage.getItem(HISTORY_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((r) => r && Number.isInteger(r.seed) && typeof r.share === 'string')
+      .slice(0, HISTORY_LIMIT);
+  } catch {
+    return [];
+  }
+}
+function saveHistory() {
+  try {
+    window.localStorage.setItem(HISTORY_KEY, JSON.stringify(ui.history));
+  } catch {
+    /* storage unavailable: history simply stays in memory for this session */
+  }
+}
+
+/* ------------------------------------------------------------------ cut-ins */
+function cutIn(text, side) {
+  const box = $('cutin');
+  const span = box.firstElementChild;
+  window.clearTimeout(ui.cutTimer);
+  span.textContent = text;
+  box.classList.toggle('indigo', side === 'I');
+  if (reducedMotion()) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  // one queued cut-in at a time, always cleared
+  span.style.animation = 'none';
+  void span.offsetWidth;
+  span.style.animation = '';
+  ui.cutTimer = window.setTimeout(() => {
+    box.hidden = true;
+  }, 640);
+}
+
+/* -------------------------------------------------------------------- board */
+function glyphFor(kind) {
+  return kind === 'CORE' ? '\u25C6' : '\u25B2';
+}
+
+function renderBoard(mirror) {
+  const board = $('board');
+  board.replaceChildren();
+  const byKey = new Map(mirror.stacks.map((s) => [s.y * 10 + s.x, s]));
+  for (let y = 0; y < 5; y++) {
+    for (let x = 0; x < 5; x++) {
+      const stack = byKey.get(y * 10 + x);
+      const btn = el('button', 'sq');
+      btn.type = 'button';
+      btn.dataset.x = String(x);
+      btn.dataset.y = String(y);
+      if (!stack) {
+        btn.classList.add('empty');
+        btn.setAttribute('aria-label', 'Square ' + x + ',' + y + ': no paper.');
+        board.appendChild(btn);
+        continue;
+      }
+      const top = stack.layers[stack.layers.length - 1];
+      const sheet = el('div', 'paper' + (top.face === 1 ? ' back' : ''));
+      sheet.appendChild(el('div', 'crease'));
+      sheet.appendChild(el('span', 'layers', String(stack.layers.length)));
+      const liveTop = [...stack.layers].reverse().find((l) => l.unit && l.unit.alive);
+      const anyUnit = liveTop || [...stack.layers].reverse().find((l) => l.unit);
+      if (anyUnit && anyUnit.unit) {
+        const u = anyUnit.unit;
+        const mark = el('div', 'mark ' + u.owner + (u.alive ? '' : ' dead'));
+        mark.appendChild(el('span', 'glyph', glyphFor(u.kind)));
+        mark.appendChild(el('span', 'tag', u.owner + u.id));
+        if (u.kind === 'CORE') mark.appendChild(el('span', 'hp', '\u2588'.repeat(Math.max(0, u.integrity))));
+        sheet.appendChild(mark);
+      }
+      btn.appendChild(sheet);
+      btn.setAttribute('aria-label', stack.text);
+      board.appendChild(btn);
+    }
+  }
+}
+
+function squareAt(x, y) {
+  return $('board').querySelector('.sq[data-x="' + x + '"][data-y="' + y + '"]');
+}
+
+function clearHighlights() {
+  for (const node of $('board').querySelectorAll('.sq')) {
+    node.classList.remove('flap', 'dest', 'threat', 'sel');
+  }
+}
+
+function highlightPreview(preview) {
+  clearHighlights();
+  if (!preview || !preview.ok) return;
+  for (const item of preview.flap) {
+    const node = squareAt(item.from.x, item.from.y);
+    if (node) node.classList.add('flap');
+  }
+  for (const dest of preview.destinations) {
+    const node = squareAt(dest.x, dest.y);
+    if (node) node.classList.add('dest');
+  }
+  const threatCells = new Set();
+  for (const strike of preview.newStrikes) {
+    for (const id of [strike.attacker, strike.target]) {
+      const unit = ui.state.units.find((u) => u.id === id);
+      if (!unit) continue;
+      const cell = preview.stacksAfter.find((s) => s.ids.includes(unit.cell));
+      if (cell) threatCells.add(cell.y * 10 + cell.x);
+    }
+  }
+  for (const key of threatCells) {
+    const node = squareAt(key % 10, Math.floor(key / 10));
+    if (node) node.classList.add('threat');
+  }
+}
+
+/* ------------------------------------------------------------------ preview */
+function renderPreview(action) {
+  const box = $('preview');
+  box.replaceChildren();
+  if (!action) {
+    box.appendChild(el('p', null, 'Focus a fold to preview it, or pick a strike to resolve contact now.'));
+    highlightPreview(null);
+    return;
+  }
+  if (action.type === 'STRIKE') {
+    const p = el('p');
+    p.appendChild(el('b', null, 'Strike preview. '));
+    p.appendChild(document.createTextNode(describeAction(ui.state, action) + '.'));
+    box.appendChild(p);
+    const target = ui.state.units.find((u) => u.id === action.target);
+    box.appendChild(
+      el(
+        'p',
+        null,
+        target.kind === 'CORE'
+          ? 'Result: core integrity ' + target.integrity + ' \u2192 ' + (target.integrity - 1) +
+            (target.integrity - 1 <= 0 ? ' \u2014 the core falls and the match ends.' : '.')
+          : 'Result: the blade is captured and removed from play.',
+      ),
+    );
+    clearHighlights();
+    const unit = ui.state.units.find((u) => u.id === action.target);
+    const cell = ui.state.cells.find((c) => c.id === unit.cell);
+    const node = squareAt(cell.x, cell.y);
+    if (node) node.classList.add('sel');
+    return;
+  }
+  const preview = previewFold(ui.state, action);
+  if (!preview.ok) {
+    box.appendChild(el('p', null, 'That fold is not legal: ' + preview.reason + '.'));
+    highlightPreview(null);
+    return;
+  }
+  const head = el('p');
+  head.appendChild(el('b', null, 'Fold preview. '));
+  head.appendChild(
+    document.createTextNode(
+      describeAction(ui.state, action) +
+        '. The flap of ' + preview.flap.length + ' cell(s) travels ' + preview.movesOver +
+        ' and lands on ' + preview.overlaps.length + ' stationary square(s), flipping face and layer order.',
+    ),
+  );
+  box.appendChild(head);
+  const list = el('ul');
+  list.appendChild(
+    el(
+      'li',
+      null,
+      'Layering after the fold: ' +
+        preview.stacksAfter
+          .filter((s) => s.movingIds.length > 0)
+          .map((s) => {
+            const names = s.ids.map((id) => {
+              const p = paperOf(id);
+              return (s.movingIds.includes(id) ? '\u2191' : '') + p.px + ',' + p.py;
+            });
+            return s.x + ',' + s.y + ' [' + names.join(' < ') + ']';
+          })
+          .join('; ') +
+        ' (bottom to top, \u2191 marks the moving flap).',
+    ),
+  );
+  if (preview.newStrikes.length === 0) {
+    list.appendChild(el('li', null, 'No new strike contacts would be created.'));
+  } else {
+    const seen = new Set();
+    for (const strike of preview.newStrikes) {
+      const key = strike.attacker + '>' + strike.target;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.appendChild(
+        el(
+          'li',
+          null,
+          'New contact: ' + unitLabel(ui.state, strike.attacker) + ' could strike ' +
+            unitLabel(ui.state, strike.target) + '.',
+        ),
+      );
+    }
+  }
+  box.appendChild(list);
+  highlightPreview(preview);
+}
+
+/* ------------------------------------------------------------------ actions */
+function renderActions(mirror) {
+  const host = $('actions');
+  host.replaceChildren();
+  const state = ui.state;
+  if (state.status !== 'ACTIVE') {
+    host.appendChild(el('p', 'hint', 'The match is over. Start a new one below.'));
+    return;
+  }
+  if (ui.handoffPending) {
+    host.appendChild(el('p', 'hint', 'Hand the device to ' + sideName(state.toMove) + ', then continue.'));
+    return;
+  }
+  if (state.mode === 'SOLO' && state.toMove === 'I') {
+    host.appendChild(el('p', 'hint', 'Indigo (the machine) is choosing\u2026'));
+    return;
+  }
+  for (const item of mirror.actions) {
+    const btn = el('button', item.type === 'FOLD' ? 'fold' : 'strike');
+    btn.type = 'button';
+    btn.dataset.key = item.key;
+    btn.appendChild(el('span', 'k', item.key));
+    btn.appendChild(document.createTextNode(item.label));
+    btn.addEventListener('click', () => submitAction(item.action));
+    btn.addEventListener('pointerenter', () => renderPreview(item.action));
+    btn.addEventListener('focus', () => renderPreview(item.action));
+    btn.addEventListener('pointerleave', () => renderPreview(null));
+    btn.addEventListener('blur', () => renderPreview(null));
+    host.appendChild(btn);
+  }
+}
+
+/* ------------------------------------------------------------------- render */
+function outcomeSentence(state) {
+  if (state.status !== 'DONE') return '';
+  const why =
+    state.reason === 'CORE'
+      ? 'core captured'
+      : state.reason === 'CAP'
+        ? 'action cap reached'
+        : 'no legal action remained';
+  if (state.outcome === 'D') return 'Draw (' + why + ').';
+  return sideName(state.outcome) + ' wins \u2014 ' + why + '.';
+}
+
+function renderStatus(mirror) {
+  const state = ui.state;
+  const parts = [];
+  if (state.status === 'DONE') {
+    parts.push(outcomeSentence(state));
+  } else if (ui.handoffPending) {
+    parts.push('Pass the device to ' + sideName(state.toMove) + '.');
+  } else if (state.mode === 'SOLO' && state.toMove === 'I') {
+    parts.push('Indigo (machine) to act.');
+  } else {
+    parts.push(sideName(state.toMove) + ' to act.');
+  }
+  parts.push('Action ' + state.turn + ' of ' + TURN_CAP + '.');
+  if (state.status === 'ACTIVE') {
+    const count = legalActions(state).length;
+    parts.push(count + ' legal action' + (count === 1 ? '' : 's') + ' available.');
+  }
+  parts.push('Seed ' + state.seed + ', ' + (state.mode === 'SOLO' ? 'solo' : 'pass and play') + '.');
+  if (ui.lastNote) parts.push(ui.lastNote);
+  $('status').textContent = parts.join(' ');
+
+  const meters = $('meters');
+  meters.replaceChildren();
+  for (const side of ['V', 'I']) {
+    const box = el('div', 'meter ' + side);
+    box.appendChild(el('dt', null, sideName(side) + ' (' + side + ')'));
+    const s = mirror.score[side];
+    box.appendChild(el('dd', null, 'Core integrity ' + s.integrity + ' \u00b7 blades ' + s.blades + '/3'));
+    box.appendChild(el('dd', null, 'Fold tokens ' + mirror.tokens[side] + '/' + FOLD_TOKENS + ' \u00b7 top faces ' + s.exposed));
+    meters.appendChild(box);
+  }
+}
+
+function renderMirror(mirror) {
+  const host = $('mirror');
+  host.replaceChildren();
+  for (const stack of mirror.stacks) {
+    const li = el('li', stack.topOwner || '');
+    li.appendChild(document.createTextNode(stack.text));
+    host.appendChild(li);
+  }
+}
+
+function renderHistory() {
+  const host = $('history');
+  host.replaceChildren();
+  if (ui.history.length === 0) {
+    host.appendChild(el('li', null, 'No completed matches stored yet.'));
+    return;
+  }
+  for (const record of ui.history) {
+    const li = el('li');
+    li.appendChild(
+      document.createTextNode(
+        'Seed ' + record.seed + ' \u00b7 ' + (record.mode === 'SOLO' ? 'solo' : 'pass') + ' \u00b7 ' +
+          (record.outcome === 'D' ? 'draw' : sideName(record.outcome) + ' won') + ' by ' +
+          String(record.reason).toLowerCase() + ' in ' + record.actions + ' actions. ',
+      ),
+    );
+    const btn = el('button', 'ghost', 'Replay seed ' + record.seed);
+    btn.type = 'button';
+    btn.addEventListener('click', () => {
+      $('seed').value = String(record.seed);
+      for (const radio of document.querySelectorAll('input[name="mode"]')) {
+        radio.checked = radio.value === record.mode;
+      }
+      startGame(record.seed, record.mode);
+    });
+    li.appendChild(btn);
+    host.appendChild(li);
+  }
+}
+
+function render() {
+  const mirror = boardMirror(ui.state);
+  renderBoard(mirror);
+  renderStatus(mirror);
+  renderActions(mirror);
+  renderMirror(mirror);
+  renderPreview(null);
+  $('undo').disabled = !undoAvailable(ui.state, ui.undoArmed) || ui.busy;
+  $('pass-ready').hidden = !ui.handoffPending;
+  $('share-text').value = ui.state.status === 'DONE' ? serializeMatch(ui.state) : '';
+  $('copy-share').disabled = ui.state.status !== 'DONE';
+  $('export-png').disabled = false;
+}
+
+/* --------------------------------------------------------------- committing */
+function hingeThen(action, done) {
+  if (reducedMotion() || action.type !== 'FOLD') {
+    done();
+    return;
+  }
+  const preview = previewFold(ui.state, action);
+  if (!preview.ok) {
+    done();
+    return;
+  }
+  const axisX = action.axis === 'x';
+  for (const item of preview.flap) {
+    const node = squareAt(item.from.x, item.from.y);
+    if (!node) continue;
+    node.style.setProperty('--rx', axisX ? '0' : '1');
+    node.style.setProperty('--ry', axisX ? '1' : '0');
+    node.style.setProperty('--hx', axisX ? (action.direction === 'low' ? '100%' : '0%') : '50%');
+    node.style.setProperty('--hy', axisX ? '50%' : action.direction === 'low' ? '100%' : '0%');
+    node.classList.add('hinge');
+  }
+  window.setTimeout(done, 430);
+}
+
+function afterCommit(action, previous) {
+  const state = ui.state;
+  const key = actionKey(action);
+  if (action.type === 'STRIKE') {
+    const before = previous.units.find((u) => u.id === action.target);
+    const after = state.units.find((u) => u.id === action.target);
+    if (before.kind === 'CORE') cutIn(after.alive ? 'CORE HIT' : 'CORE DOWN', before.owner === 'V' ? 'I' : 'V');
+    else cutIn('BLADE TAKEN', before.owner === 'V' ? 'I' : 'V');
+    ui.lastNote =
+      describeAction(previous, action) + ' [' + key + ']. ' +
+      (before.kind === 'CORE'
+        ? 'Integrity ' + before.integrity + ' \u2192 ' + after.integrity + '.'
+        : 'Blade captured.');
+  } else {
+    cutIn('FOLD', previous.toMove);
+    ui.lastNote = describeAction(previous, action) + ' [' + key + '].';
+  }
+  if (ui.pendingNote) {
+    ui.lastNote += ' ' + ui.pendingNote;
+    ui.pendingNote = '';
+  }
+}
+
+function finishMatch() {
+  const state = ui.state;
+  ui.history = pushMatchRecord(ui.history, matchRecord(state));
+  saveHistory();
+  renderHistory();
+  const share = serializeMatch(state);
+  $('outcome-body').textContent =
+    outcomeSentence(state) + ' Seed ' + state.seed + ', ' + state.turn + ' committed actions.';
+  $('outcome-share').textContent = 'Result string: ' + share;
+  $('share-text').value = share;
+  if (typeof $('outcome-dialog').showModal === 'function') $('outcome-dialog').showModal();
+}
+
+function commit(action, byHuman) {
+  const previous = ui.state;
+  const verdict = checkAction(previous, action);
+  if (!verdict.ok) {
+    ui.lastNote = 'Refused: ' + verdict.reason + '.';
+    render();
+    return;
+  }
+  ui.busy = true;
+  const gen = ui.gen;
+  hingeThen(action, () => {
+    // a new game, an undo or a loaded replay during the hinge invalidates this commit
+    if (gen !== ui.gen) {
+      ui.busy = false;
+      return;
+    }
+    ui.state = commitAction(previous, action);
+    afterCommit(action, previous);
+    ui.busy = false;
+    ui.selected = null;
+    if (ui.state.status !== 'ACTIVE') {
+      ui.undoArmed = false;
+      ui.handoffPending = false;
+      render();
+      finishMatch();
+      return;
+    }
+    if (byHuman) {
+      ui.undoArmed = true;
+      if (ui.state.mode === 'PASS') {
+        ui.handoffPending = true;
+        render();
+        $('pass-ready').focus();
+        return;
+      }
+      render();
+      scheduleAI();
+      return;
+    }
+    ui.undoArmed = false;
+    render();
+  });
+}
+
+function submitAction(action) {
+  if (ui.busy || ui.handoffPending) return;
+  if (ui.state.status !== 'ACTIVE') return;
+  if (ui.state.mode === 'SOLO' && ui.state.toMove === 'I') return;
+  commit(action, true);
+}
+
+function scheduleAI() {
+  window.clearTimeout(ui.aiTimer);
+  const delay = reducedMotion() ? 0 : AI_DELAY_MS;
+  ui.aiTimer = window.setTimeout(() => {
+    if (ui.state.status !== 'ACTIVE') return;
+    if (!(ui.state.mode === 'SOLO' && ui.state.toMove === 'I')) return;
+    const explained = aiExplain(ui.state);
+    const action = chooseAction(ui.state);
+    ui.undoArmed = false;
+    ui.pendingNote =
+      'Machine weighed ' + explained.considered + ' legal action(s), marked ' + explained.unsafe.length +
+      ' unsafe, and played ' + explained.chosen + '.';
+    commit(action, false);
+  }, delay);
+}
+
+/* -------------------------------------------------------------- game set-up */
+function readSeed() {
+  const raw = $('seed').value.trim();
+  if (!/^[0-9]{1,10}$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 && value <= 4294967295 ? value : null;
+}
+
+function readMode() {
+  const picked = document.querySelector('input[name="mode"]:checked');
+  return picked && picked.value === 'PASS' ? 'PASS' : 'SOLO';
+}
+
+function startGame(seed, mode) {
+  window.clearTimeout(ui.aiTimer);
+  ui.gen += 1;
+  ui.state = createGame(seed, mode);
+  ui.undoArmed = false;
+  ui.handoffPending = false;
+  ui.busy = false;
+  ui.selected = null;
+  ui.lastNote = 'New sheet, seed ' + seed + '. ' + sideName(ui.state.firstMover) + ' opens.';
+  $('seed').value = String(seed);
+  render();
+  if (mode === 'SOLO' && ui.state.toMove === 'I') scheduleAI();
+}
+
+function freshSeed() {
+  // Interface-side only: the pure engine never reads a clock or ambient entropy.
+  const buf = new Uint32Array(1);
+  if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
+    window.crypto.getRandomValues(buf);
+    return buf[0];
+  }
+  return (Date.now() % 4294967295) >>> 0;
+}
+
+/* ------------------------------------------------------------- PNG exporting */
+function exportPNG() {
+  const canvas = $('export-canvas');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cols = 5;
+  const size = CELL_PX;
+  const pad = 40;
+  const width = pad * 2 + cols * size;
+  const height = pad * 2 + cols * size + 150;
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0b0c0e';
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = '#eae4d6';
+  ctx.font = '700 26px ui-monospace, monospace';
+  ctx.fillText('ORIGAMI//WAR', pad, 30);
+  ctx.font = '14px ui-monospace, monospace';
+  ctx.fillStyle = '#a29c8f';
+  ctx.fillText('seed ' + ui.state.seed + ' \u00b7 ' + ui.state.mode + ' \u00b7 ' + VERSION, pad, 52);
+
+  const mirror = boardMirror(ui.state);
+  const byKey = new Map(mirror.stacks.map((s) => [s.y * 10 + s.x, s]));
+  for (let y = 0; y < 5; y++) {
+    for (let x = 0; x < 5; x++) {
+      const left = pad + x * size;
+      const top = pad + 40 + y * size;
+      const stack = byKey.get(y * 10 + x);
+      if (!stack) {
+        ctx.strokeStyle = '#23262d';
+        ctx.strokeRect(left + 3, top + 3, size - 6, size - 6);
+        continue;
+      }
+      const topLayer = stack.layers[stack.layers.length - 1];
+      ctx.fillStyle = topLayer.face === 1 ? '#ded2b4' : '#f4ecd8';
+      ctx.fillRect(left + 2, top + 2, size - 4, size - 4);
+      ctx.strokeStyle = '#b8a87e';
+      ctx.strokeRect(left + 2, top + 2, size - 4, size - 4);
+      ctx.fillStyle = '#6d6248';
+      ctx.font = '11px ui-monospace, monospace';
+      ctx.fillText(String(stack.layers.length) + 'L', left + size - 24, top + 16);
+      const live = [...stack.layers].reverse().find((l) => l.unit && l.unit.alive);
+      if (live) {
+        const unit = live.unit;
+        ctx.fillStyle = unit.owner === 'V' ? '#d6431f' : '#3a4fd8';
+        ctx.font = '700 34px ui-monospace, monospace';
+        ctx.fillText(unit.kind === 'CORE' ? '\u25C6' : '\u25B2', left + size / 2 - 17, top + size / 2 + 10);
+        ctx.fillStyle = unit.owner === 'V' ? '#3d0f05' : '#0a1140';
+        ctx.font = '700 13px ui-monospace, monospace';
+        ctx.fillText(unit.owner + unit.id, left + 8, top + size - 10);
+      }
+    }
+  }
+  ctx.fillStyle = '#eae4d6';
+  ctx.font = '14px ui-monospace, monospace';
+  const footerTop = pad + 40 + 5 * size + 26;
+  ctx.fillText(outcomeSentence(ui.state) || 'Match in progress.', pad, footerTop);
+  ctx.fillStyle = '#a29c8f';
+  ctx.font = '12px ui-monospace, monospace';
+  ctx.fillText('actions ' + ui.state.turn + '/' + TURN_CAP + ' \u00b7 log ' + (actionLog(ui.state).join('') || '(none)'), pad, footerTop + 22);
+  if (ui.state.status === 'DONE') {
+    ctx.fillText(serializeMatch(ui.state), pad, footerTop + 42);
+  }
+
+  const url = canvas.toDataURL('image/png');
+  const link = el('a');
+  link.href = url;
+  link.download = 'origami-war-seed-' + ui.state.seed + '.png';
+  link.rel = 'noopener';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  ui.lastNote = 'Board exported as PNG.';
+  render();
+}
+
+/* ------------------------------------------------------------------- wiring */
+$('setup-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const seed = readSeed();
+  if (seed === null) {
+    ui.lastNote = 'Seed must be a whole number between 0 and 4294967295.';
+    render();
+    $('seed').focus();
+    return;
+  }
+  startGame(seed, readMode());
+});
+
+$('replay-seed').addEventListener('click', () => {
+  startGame(ui.state.seed, ui.state.mode);
+});
+
+$('random-seed').addEventListener('click', () => {
+  $('seed').value = String(freshSeed());
+  $('seed').focus();
+});
+
+$('undo').addEventListener('click', () => {
+  if (ui.busy) return;
+  try {
+    ui.state = fairUndo(ui.state, ui.undoArmed);
+  } catch {
+    return;
+  }
+  window.clearTimeout(ui.aiTimer);
+  ui.gen += 1;
+  ui.undoArmed = false;
+  ui.handoffPending = false;
+  ui.lastNote = 'Undid your unanswered action.';
+  render();
+});
+
+$('pass-ready').addEventListener('click', () => {
+  ui.handoffPending = false;
+  ui.undoArmed = false;
+  ui.lastNote = sideName(ui.state.toMove) + ' has the device.';
+  render();
+  const first = $('actions').querySelector('button');
+  if (first) first.focus();
+});
+
+$('board').addEventListener('click', (event) => {
+  const square = event.target.closest('.sq');
+  if (!square) return;
+  ui.lastNote = square.getAttribute('aria-label');
+  clearHighlights();
+  square.classList.add('sel');
+  const mirror = boardMirror(ui.state);
+  renderStatus(mirror);
+});
+
+$('pause').addEventListener('click', () => {
+  if (typeof $('pause-dialog').showModal === 'function') $('pause-dialog').showModal();
+});
+$('pause-close').addEventListener('click', () => $('pause-dialog').close());
+
+$('help').addEventListener('click', () => {
+  if (typeof $('help-dialog').showModal === 'function') $('help-dialog').showModal();
+});
+$('help-close').addEventListener('click', () => $('help-dialog').close());
+
+$('outcome-close').addEventListener('click', () => $('outcome-dialog').close());
+$('outcome-again').addEventListener('click', () => {
+  $('outcome-dialog').close();
+  const seed = freshSeed();
+  $('seed').value = String(seed);
+  startGame(seed, ui.state.mode);
+});
+$('outcome-replay').addEventListener('click', () => {
+  $('outcome-dialog').close();
+  startGame(ui.state.seed, ui.state.mode);
+});
+
+$('copy-share').addEventListener('click', async () => {
+  const text = $('share-text').value;
+  if (!text) return;
+  try {
+    await window.navigator.clipboard.writeText(text);
+    ui.lastNote = 'Result string copied.';
+  } catch {
+    $('share-text').select();
+    ui.lastNote = 'Clipboard unavailable: the result string is selected for manual copying.';
+  }
+  render();
+});
+
+$('export-png').addEventListener('click', exportPNG);
+
+$('verify-btn').addEventListener('click', () => {
+  const parsed = parseMatch($('verify-input').value.trim());
+  $('verify-out').textContent = parsed.ok
+    ? 'Valid: seed ' + parsed.seed + ', ' + parsed.mode + ', ' +
+      (parsed.outcome === 'D' ? 'draw' : sideName(parsed.outcome) + ' won') + ', ' +
+      parsed.state.turn + ' actions, checksum verified.'
+    : 'Rejected: ' + parsed.reason + '.';
+});
+
+$('load-btn').addEventListener('click', () => {
+  const raw = $('verify-input').value.trim();
+  const parsed = parseMatch(raw);
+  if (!parsed.ok) {
+    $('verify-out').textContent = 'Rejected: ' + parsed.reason + '.';
+    return;
+  }
+  window.clearTimeout(ui.aiTimer);
+  ui.gen += 1;
+  ui.state = replay(parsed.seed, parsed.mode, parsed.log);
+  ui.undoArmed = false;
+  ui.handoffPending = false;
+  ui.lastNote = 'Loaded a validated match: ' + outcomeSentence(ui.state);
+  $('seed').value = String(parsed.seed);
+  $('verify-out').textContent = 'Loaded and replayed ' + actionLog(ui.state).length + ' actions.';
+  render();
+});
+
+$('clear-history').addEventListener('click', () => {
+  ui.history = [];
+  saveHistory();
+  renderHistory();
+  ui.lastNote = 'Local history cleared.';
+  render();
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    for (const id of ['outcome-dialog', 'pause-dialog', 'help-dialog']) {
+      const dialog = $(id);
+      if (dialog.open) dialog.close();
+    }
+  }
+  if (event.key === '?' && !event.target.matches('input')) {
+    if (typeof $('help-dialog').showModal === 'function') $('help-dialog').showModal();
+  }
+});
+
+/* --------------------------------------------------------------------- boot */
+$('history-limit').textContent = String(HISTORY_LIMIT);
+$('ai-note').textContent =
+  'The machine plays a bounded two-ply heuristic, not a deep search: it enumerates its own legal ' +
+  'actions (at most ' + AI_ACTION_LIMIT + '), takes an immediate core capture when one exists, avoids ' +
+  'actions that hand you an immediate core capture, then scores core damage, blade captures, contact ' +
+  'potential, exposed control and fold-token conservation, breaking ties on the lexicographically ' +
+  'smallest action key. It cannot plan combinations beyond that single reply, and it is fully ' +
+  'deterministic: the same position always produces the same action.';
+ui.history = loadHistory();
+renderHistory();
+startGame(1, 'SOLO');
+</script>
+</body>
+</html>
