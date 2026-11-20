@@ -747,6 +747,24 @@ export const AI_ACTION_LIMIT = 64;
 /** Hard cap on the opponent replies examined per candidate action. */
 export const AI_REPLY_LIMIT = 64;
 
+/** Difficulty tiers, weakest to strongest. APPRENTICE is the legacy two-ply machine. */
+export const AI_TIERS = Object.freeze(['APPRENTICE', 'ARTISAN', 'MASTER']);
+
+/** Declared search budgets per tier: maximum depth and total nodes across iterations. */
+export const SEARCH_BUDGETS = Object.freeze({
+  ARTISAN: Object.freeze({ depth: 4, nodes: 2500 }),
+  MASTER: Object.freeze({ depth: 6, nodes: 6000 }),
+});
+
+function assertTier(tier) {
+  if (!AI_TIERS.includes(tier)) throw new Error('unknown tier ' + tier);
+}
+
+// Search tiers land in the next TDD slice; until then they refuse honestly.
+function searchExplainPrivate(state, limits, tier) {
+  throw new Error('search tiers are not implemented yet');
+}
+
 function coreOf(state, side) {
   return state.units.find((u) => u.owner === side && u.kind === 'CORE');
 }
@@ -805,7 +823,9 @@ function scoreAfter(state, side) {
  * Full, honest account of one AI decision: what it looked at, how it scored,
  * which actions it judged unsafe and which it chose. Pure and bounded.
  */
-export function aiExplain(state) {
+export function aiExplain(state, tier = 'APPRENTICE') {
+  assertTier(tier);
+  if (tier !== 'APPRENTICE') return searchExplainPrivate(state, SEARCH_BUDGETS[tier], tier);
   const side = state.toMove;
   const actions = legalActions(state).slice(0, AI_ACTION_LIMIT);
   if (actions.length === 0) throw new Error('no legal action to choose');
@@ -830,9 +850,9 @@ export function aiExplain(state) {
   return { side, depth: 2, considered: actions.length, winning, unsafe, scores, chosen };
 }
 
-/** The AI's action for a state. Same state always yields the same legal action. */
-export function chooseAction(state) {
-  const explained = aiExplain(state);
+/** The AI's action for a state. Same state and tier always yield the same legal action. */
+export function chooseAction(state, tier = 'APPRENTICE') {
+  const explained = aiExplain(state, tier);
   const action = legalActions(state).slice(0, AI_ACTION_LIMIT).find((a) => actionKey(a) === explained.chosen);
   if (!action) throw new Error('ai failed to resolve its own choice');
   return action;

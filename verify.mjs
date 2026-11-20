@@ -1667,6 +1667,31 @@ test('fairUndo reverts exactly one unresponded action and refuses when not armed
   eq(E.undoAvailable(state, true), false);
 });
 
+// ------------------------------- slice 17: difficulty tiers and search AI
+test('the tier registry is declared, frozen and ordered', () => {
+  deepEq(E.AI_TIERS, ['APPRENTICE', 'ARTISAN', 'MASTER']);
+  ok(Object.isFrozen(E.AI_TIERS), 'the tier list is immutable');
+  deepEq(E.SEARCH_BUDGETS, { ARTISAN: { depth: 4, nodes: 2500 }, MASTER: { depth: 6, nodes: 6000 } });
+  ok(Object.isFrozen(E.SEARCH_BUDGETS), 'the budget table is immutable');
+  ok(Object.isFrozen(E.SEARCH_BUDGETS.ARTISAN) && Object.isFrozen(E.SEARCH_BUDGETS.MASTER), 'each budget is immutable');
+});
+
+test('an unknown tier is refused by both entry points', () => {
+  const state = E.createGame(1, 'SOLO');
+  throws(() => E.chooseAction(state, 'NOPE'), 'chooseAction refuses an unknown tier');
+  throws(() => E.aiExplain(state, 'NOPE'), 'aiExplain refuses an unknown tier');
+});
+
+test('the default tier is APPRENTICE and reproduces the legacy machine exactly', () => {
+  for (let seed = 0; seed < 10; seed++) {
+    const a = E.createGame(seed, 'SOLO');
+    const b = E.createGame(seed, 'SOLO');
+    deepEq(E.chooseAction(a, 'APPRENTICE'), E.chooseAction(b), 'seed ' + seed + ' choice identical');
+    deepEq(E.aiExplain(a, 'APPRENTICE'), E.aiExplain(b), 'seed ' + seed + ' explanation identical');
+    bump('tier_default_identity_checks');
+  }
+});
+
 // ------------------- slice 16: static scans of the shipped, dependency-free files
 const ROOT = new URL('./', import.meta.url);
 
@@ -1684,7 +1709,7 @@ function countMatches(source, pattern) {
 }
 
 test('the repository ships only the allowed dependency-free files', () => {
-  const allowed = new Set(['.git', 'index.html', 'engine.mjs', 'verify.mjs', 'README.md', 'TDD-EVIDENCE.md']);
+  const allowed = new Set(['.git', 'docs', 'index.html', 'engine.mjs', 'verify.mjs', 'README.md', 'TDD-EVIDENCE.md']);
   const present = readdirSync(new URL('.', ROOT));
   for (const entry of present) ok(allowed.has(entry), 'unexpected file in the repository: ' + entry);
   for (const required of ['index.html', 'engine.mjs', 'verify.mjs', 'README.md', 'TDD-EVIDENCE.md']) {

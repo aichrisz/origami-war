@@ -463,3 +463,41 @@ literal pause promise true without changing game rules.
 - Browser proof: while Indigo's opening reply was pending, Pause held the match
   at action 0 beyond the AI delay; closing the dialog resumed exactly one reply
   and reached action 1.
+
+---
+
+## RED 20 — difficulty tiers: registry, validation, byte-identical default
+
+- UTC: 2026-11-20T22:51:02Z
+- Command: `node verify.mjs`
+- Exit code: 1
+
+```
+FAILED the tier registry is declared, frozen and ordered
+  deep mismatch
+    expected ["APPRENTICE","ARTISAN","MASTER"]
+    actual   undefined
+FAILED an unknown tier is refused by both entry points
+  chooseAction refuses an unknown tier
+FAILED the repository ships only the allowed dependency-free files
+  unexpected file in the repository: docs
+RESULT: FAIL (3 failing, 134 passing)
+```
+
+Expected: the tier registry and validation do not exist yet. The third failure
+is the shipped-files allowlist meeting the new `docs/` spec/plan directory; the
+allowlist gains `docs` while the no-package.json/no-node_modules assertions stay
+unchanged (design docs are not dependency tooling).
+
+---
+
+## GREEN — tier registry with byte-identical APPRENTICE default
+
+- UTC: 2026-11-20T22:51:02Z
+- Command: `node verify.mjs`
+- Exit code: 0
+- Result: `RESULT: PASS (137 passing, 0 failing)`.
+- `AI_TIERS` and `SEARCH_BUDGETS` frozen; unknown tiers throw at both entry
+  points; seeds 0-9 prove `chooseAction`/`aiExplain` with the default tier are
+  deep-identical to the legacy calls. Search tiers refuse honestly until the
+  next slice (private stub, no public surface yet).
