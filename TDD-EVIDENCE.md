@@ -569,3 +569,53 @@ Verified accounts: search_determinism_checks=12, search_budget_checks=6,
 faster_win_checks=2 (one-ply win preferred over the three-ply combination),
 single forced root action returned unchanged, finished matches throw for every
 tier, bad limits refused.
+
+---
+
+## RED 25 — MASTER evaluation presence + strength gate
+
+- UTC: 2026-11-21T01:25:34Z
+- Command: `node verify.mjs`
+- Exit code: 1
+
+```
+FAILED MASTER evaluation prices core-contact threats the base evaluation misses
+  MASTER prices the threat higher: <equal scores>
+RESULT: FAIL (1 failing, 151 passing)
+```
+
+Expected: `searchExplain` ignored the `master` limit flag, so both accounts used
+the base evaluation. The tactical suite (immediate core win, refused suicidal
+fold, blade capture) already passed for all three tiers; the strength sweep
+already passed and its numbers are recorded below.
+
+---
+
+## GREEN — MASTER evaluation honored; strength gate verified 8-0-0
+
+- UTC: 2026-11-21T01:25:34Z
+- Command: `node verify.mjs`
+- Exit code: 0
+- Result: `RESULT: PASS (152 passing, 0 failing)`.
+
+`searchExplain(state, {depth, nodes, master: true})` now selects the MASTER
+threat/mobility evaluation; the tiered entry points are unchanged.
+master_eval_checks=1: with the enemy core at 2 integrity, Fy2l's threat-building
+fold scores strictly higher under MASTER than base at depth 2.
+
+Strength sweep (8 seeds, MASTER and APPRENTICE alternating sides, full games):
+
+```
+seed 0: MASTER=V outcome=V CORE turns=5
+seed 1: MASTER=I outcome=I CORE turns=9
+seed 2: MASTER=V outcome=V CORE turns=14
+seed 3: MASTER=I outcome=I CORE turns=8
+seed 4: MASTER=V outcome=V CORE turns=7
+seed 5: MASTER=I outcome=I CORE turns=4
+seed 6: MASTER=V outcome=V CORE turns=8
+seed 7: MASTER=I outcome=I CORE turns=4
+MASTER W-L-D: 8-0-0
+```
+
+Gate `masterWins > apprenticeWins` passes: 8 > 0. Every win was a core capture,
+not a cap comparison. This is a bounded sweep, not a claim of perfect play.

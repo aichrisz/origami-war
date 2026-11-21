@@ -1067,12 +1067,13 @@ function searchAccount(state, limits, master) {
 }
 
 /**
- * Search with explicit limits and the base evaluation. Same position and
- * limits always produce the same account. Used by the tiered entry points and
- * by the test suite to probe budget behaviour directly.
+ * Search with explicit limits. Same position and limits always produce the
+ * same account. `master: true` selects the MASTER threat/mobility evaluation;
+ * omitted or false uses the base weights. Used by the tiered entry points and
+ * by the test suite to probe budget and evaluation behaviour directly.
  */
 export function searchExplain(state, limits) {
-  return searchAccount(state, limits, false);
+  return searchAccount(state, limits, Boolean(limits && limits.master === true));
 }
 
 // ------------------------------------------------------------ log and replay

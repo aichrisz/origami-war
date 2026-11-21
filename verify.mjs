@@ -1881,6 +1881,72 @@ test('the search transition is rule-identical to commitAction on every field sea
   }
 });
 
+// --- RED 25: MASTER evaluation presence, tactical suite, strength gate ---
+
+test('every tier passes the basic tactical suite', () => {
+  const tiers = ['APPRENTICE', 'ARTISAN', 'MASTER'];
+  // immediate core capture
+  const win = manualGame({
+    units: manualGame().units.map((u) => (u.id === 'E' ? { ...u, cell: E.cellId(1, 2), integrity: 1 } : u)),
+  });
+  // handing the opponent a core capture is refused
+  const suicide = { type: 'FOLD', axis: 'y', crease: 2, direction: 'low' };
+  const unsafeState = manualGame({
+    units: manualGame().units.map((u) => {
+      if (u.id === 'A') return { ...u, cell: E.cellId(0, 0), integrity: 1 };
+      if (u.id === 'B') return { ...u, cell: E.cellId(2, 1) };
+      if (u.id === 'H') return { ...u, cell: E.cellId(0, 2) };
+      return u;
+    }),
+  });
+  // blade capture over a neutral fold
+  const capture = manualGame({
+    units: manualGame().units.map((u) => (u.id === 'H' ? { ...u, cell: E.cellId(1, 2) } : u)),
+  });
+  for (const tier of tiers) {
+    deepEq(E.chooseAction(win, tier), { type: 'STRIKE', attacker: 'C', target: 'E' }, tier + ' takes the immediate core win');
+    ok(!E.deepEqual(E.chooseAction(unsafeState, tier), suicide), tier + ' refuses the suicidal fold');
+    deepEq(E.chooseAction(capture, tier), { type: 'STRIKE', attacker: 'C', target: 'H' }, tier + ' prefers the blade capture');
+    bump('tactical_suite_checks');
+  }
+});
+
+test('MASTER evaluation prices core-contact threats the base evaluation misses', () => {
+  // E at 2 integrity: Fy2l builds a blade threat but no forced win exists.
+  // Indigo's best reply damages the core rather than removing the blade, so
+  // the threat survives to the leaf and MASTER must price it above base.
+  const state = comboGame(E.cellId(0, 3));
+  state.units = state.units.map((u) => (u.id === 'E' ? { ...u, integrity: 2 } : u));
+  const base = E.searchExplain(state, { depth: 2, nodes: 2000 });
+  const master = E.searchExplain(state, { depth: 2, nodes: 2000, master: true });
+  const key = 'Fy2l';
+  const baseScore = base.scores.find((s) => s.key === key).score;
+  const masterScore = master.scores.find((s) => s.key === key).score;
+  ok(masterScore > baseScore, 'MASTER prices the threat higher: ' + masterScore + ' > ' + baseScore);
+  bump('master_eval_checks');
+});
+
+test('MASTER beats APPRENTICE in an alternating-sides match sweep', () => {
+  let masterWins = 0;
+  let apprenticeWins = 0;
+  let draws = 0;
+  for (let seed = 0; seed < 8; seed++) {
+    const masterSide = seed % 2 === 0 ? 'V' : 'I';
+    let state = E.createGame(seed, 'SOLO');
+    while (state.status === 'ACTIVE') {
+      const tier = state.toMove === masterSide ? 'MASTER' : 'APPRENTICE';
+      state = E.commitAction(state, E.chooseAction(state, tier));
+      bump('strength_sweep_actions');
+    }
+    if (state.outcome === masterSide) masterWins += 1;
+    else if (state.outcome === E.other(masterSide)) apprenticeWins += 1;
+    else draws += 1;
+    bump('strength_sweep_games');
+  }
+  ok(masterWins > apprenticeWins,
+    'MASTER must win more than APPRENTICE (W-L-D): ' + masterWins + '-' + apprenticeWins + '-' + draws);
+});
+
 test('aiExplain reports the tier and a search account for search tiers', () => {
   const s = E.createGame(3, 'SOLO');
   for (const tier of ['ARTISAN', 'MASTER']) {
