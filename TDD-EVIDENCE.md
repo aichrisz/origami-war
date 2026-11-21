@@ -663,3 +663,31 @@ Browser proof (headless Chromium against a local server, one continuous tab):
 - PASS mode disables all three difficulty radios; SOLO re-enables them.
 - The decision note applies from the next machine turn; pause/resume scans
   stay green (timer cancellation unchanged).
+
+---
+
+## RED 27 (part 2) — README must document the tiers honestly
+
+- UTC: 2026-11-21T06:37:25Z
+- Command: `node verify.mjs`
+- Exit code: 1
+
+```
+FAILED README documents the rules, the tests and the deterministic model honestly
+  README must mention: APPRENTICE
+RESULT: FAIL (1 failing, 152 passing)
+```
+
+---
+
+## GREEN — three-tier documentation, final suite green
+
+- UTC: 2026-11-21T06:37:25Z
+- Command: `node verify.mjs`
+- Exit code: 0
+- Result: `RESULT: PASS (153 passing, 0 failing)`, readme_scans=15.
+
+README now documents all three tiers, the search shape, the node-budget
+contract (count-based, last-completed-depth fallback), the honest think-time
+and not-perfect-play limits, the verified 8-0-0 strength sweep, and that share
+strings record actions rather than tiers. All previously scanned phrases kept.

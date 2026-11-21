@@ -191,7 +191,13 @@ inverse transform.
 
 ## The machine opponent, honestly
 
-Solo mode plays a **bounded two-ply heuristic, not a deep search**. It:
+Solo mode offers three deterministic difficulty tiers. Same position + same
+tier always yields the same action, which is why solo matches replay exactly.
+The choice is stored only on your device and applies from the next machine
+turn.
+
+**APPRENTICE (default)** is the original **bounded two-ply heuristic, not a
+deep search**. It:
 
 1. enumerates its own legal actions (hard-capped),
 2. plays an immediate core capture if one exists,
@@ -200,10 +206,32 @@ Solo mode plays a **bounded two-ply heuristic, not a deep search**. It:
    exposed control and fold-token conservation,
 5. breaks ties on the lexicographically smallest canonical action key.
 
-It looks exactly one opponent reply deep, only far enough to notice an immediate
-core capture. It cannot plan combinations beyond that. It is fully deterministic:
-the same position always yields the same legal action, which is why solo matches
-replay exactly.
+It looks exactly one opponent reply deep and cannot plan combinations.
+
+**ARTISAN** and **MASTER** run a real combination-planning search: negamax
+with alpha-beta pruning and iterative deepening over the same pure rules
+transition the game uses. They see forced multi-move combinations - fold to
+build a threat, strike next turn even with an opponent reply in between.
+
+| Tier | Max depth | Node budget | Evaluation |
+|---|---|---|---|
+| ARTISAN | 4 plies | 2 500 nodes | core damage, captures, contact, exposure, tokens |
+| MASTER | 6 plies | 6 000 nodes | the same, plus core-contact threats and strike mobility |
+
+Honest limits:
+
+- The node budget is shared across iterative-deepening passes and is a count,
+  never a clock - determinism does not depend on device speed. When the budget
+  runs out mid-depth, the machine keeps the best move of the last *completed*
+  depth. In the worst case a MASTER turn can take a second or two on slow
+  devices; the search is bounded and always returns a legal action.
+- These are bounded searches, **not perfect play**. MASTER is strong - it won
+  all 8 games of an alternating-sides verification sweep against APPRENTICE,
+  every win by core capture - but it remains human-beatable.
+- Root scores in the machine's decision note are exact minimax values; ties
+  break on the smallest canonical action key, exactly like APPRENTICE.
+- Result strings record the actions actually played, not the tier that chose
+  them, so every share string stays valid and replayable regardless of tier.
 
 ---
 

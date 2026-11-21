@@ -2191,6 +2191,10 @@ test('README documents the rules, the tests and the deterministic model honestly
     'share',
     'checksum',
     'Undo',
+    'APPRENTICE',
+    'ARTISAN',
+    'MASTER',
+    'node budget',
   ]) {
     ok(readme.includes(phrase), 'README must mention: ' + phrase);
     bump('readme_scans');
