@@ -358,6 +358,12 @@ footer{padding:0 var(--pad) var(--pad);color:var(--chalk-dim);font-size:.72rem;m
           <label><input type="radio" name="mode" value="SOLO" checked> Solo vs machine</label>
           <label><input type="radio" name="mode" value="PASS"> Pass and play</label>
         </fieldset>
+        <fieldset id="difficulty-fieldset">
+          <legend>Machine difficulty</legend>
+          <label><input type="radio" name="difficulty" value="APPRENTICE" checked> Apprentice &mdash; one-reply heuristic</label>
+          <label><input type="radio" name="difficulty" value="ARTISAN"> Artisan &mdash; searches 4 plies deep</label>
+          <label><input type="radio" name="difficulty" value="MASTER"> Master &mdash; searches 6 plies deep</label>
+        </fieldset>
       </div>
       <div class="row" style="margin-top:.6rem">
         <button id="new-game" type="submit" class="primary">Start new game</button>
@@ -456,7 +462,7 @@ import {
   serializeMatch, parseMatch, replay, actionLog,
   fairUndo, undoAvailable, matchRecord, pushMatchRecord,
   aiExplain, sideName, unitLabel, paperOf,
-  AI_ACTION_LIMIT,
+  AI_ACTION_LIMIT, AI_TIERS, SEARCH_BUDGETS,
 } from './engine.mjs';
 
 const $ = (id) => document.getElementById(id);
@@ -469,6 +475,7 @@ const el = (tag, className, text) => {
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const HISTORY_KEY = 'origami-war/history/v1';
+const DIFFICULTY_KEY = 'origami-war/difficulty/v1';
 const AI_DELAY_MS = 460;
 const CELL_PX = 128;
 
@@ -481,6 +488,7 @@ const ui = {
   aiTimer: 0,
   cutTimer: 0,
   history: [],
+  difficulty: 'APPRENTICE',
   lastNote: '',
   pendingNote: '',
   gen: 0,
@@ -504,6 +512,29 @@ function saveHistory() {
     window.localStorage.setItem(HISTORY_KEY, JSON.stringify(ui.history));
   } catch {
     /* storage unavailable: history simply stays in memory for this session */
+  }
+}
+
+/* ------------------------------------------------------- machine difficulty */
+function loadDifficulty() {
+  try {
+    const raw = window.localStorage.getItem(DIFFICULTY_KEY);
+    return AI_TIERS.includes(raw) ? raw : 'APPRENTICE';
+  } catch {
+    return 'APPRENTICE';
+  }
+}
+function saveDifficulty() {
+  try {
+    window.localStorage.setItem(DIFFICULTY_KEY, ui.difficulty);
+  } catch {
+    /* storage unavailable: the choice stays in memory for this session */
+  }
+}
+function syncDifficultyAvailability() {
+  const solo = readMode() === 'SOLO';
+  for (const input of document.querySelectorAll('input[name="difficulty"]')) {
+    input.disabled = !solo;
   }
 }
 
@@ -945,12 +976,14 @@ function scheduleAI() {
   ui.aiTimer = window.setTimeout(() => {
     if (ui.state.status !== 'ACTIVE') return;
     if (!(ui.state.mode === 'SOLO' && ui.state.toMove === 'I')) return;
-    const explained = aiExplain(ui.state);
-    const action = chooseAction(ui.state);
+    const explained = aiExplain(ui.state, ui.difficulty);
+    const action = chooseAction(ui.state, ui.difficulty);
     ui.undoArmed = false;
-    ui.pendingNote =
-      'Machine weighed ' + explained.considered + ' legal action(s), marked ' + explained.unsafe.length +
-      ' unsafe, and played ' + explained.chosen + '.';
+    ui.pendingNote = explained.tier
+      ? 'Machine (' + explained.tier + ') searched ' + explained.nodes + ' node(s) to depth ' + explained.depth +
+        ', marked ' + explained.unsafe.length + ' unsafe, and played ' + explained.chosen + '.'
+      : 'Machine weighed ' + explained.considered + ' legal action(s), marked ' + explained.unsafe.length +
+        ' unsafe, and played ' + explained.chosen + '.';
     commit(action, false);
   }, delay);
 }
@@ -978,6 +1011,7 @@ function startGame(seed, mode) {
   ui.selected = null;
   ui.lastNote = 'New sheet, seed ' + seed + '. ' + sideName(ui.state.firstMover) + ' opens.';
   $('seed').value = String(seed);
+  syncDifficultyAvailability();
   render();
   if (mode === 'SOLO' && ui.state.toMove === 'I') scheduleAI();
 }
@@ -1081,6 +1115,18 @@ $('setup-form').addEventListener('submit', (event) => {
   }
   startGame(seed, readMode());
 });
+
+for (const input of document.querySelectorAll('input[name="mode"]')) {
+  input.addEventListener('change', syncDifficultyAvailability);
+}
+for (const input of document.querySelectorAll('input[name="difficulty"]')) {
+  input.addEventListener('change', () => {
+    ui.difficulty = input.value;
+    saveDifficulty();
+    ui.lastNote = 'Machine difficulty set to ' + input.value + '. It applies from the next machine turn.';
+    render();
+  });
+}
 
 $('replay-seed').addEventListener('click', () => {
   startGame(ui.state.seed, ui.state.mode);
@@ -1225,13 +1271,21 @@ document.addEventListener('keydown', (event) => {
 
 /* --------------------------------------------------------------------- boot */
 $('history-limit').textContent = String(HISTORY_LIMIT);
+ui.difficulty = loadDifficulty();
+for (const input of document.querySelectorAll('input[name="difficulty"]')) {
+  input.checked = input.value === ui.difficulty;
+}
 $('ai-note').textContent =
-  'The machine plays a bounded two-ply heuristic, not a deep search: it enumerates its own legal ' +
-  'actions (at most ' + AI_ACTION_LIMIT + '), takes an immediate core capture when one exists, avoids ' +
-  'actions that hand you an immediate core capture, then scores core damage, blade captures, contact ' +
-  'potential, exposed control and fold-token conservation, breaking ties on the lexicographically ' +
-  'smallest action key. It cannot plan combinations beyond that single reply, and it is fully ' +
-  'deterministic: the same position always produces the same action.';
+  'Difficulties: ' + AI_TIERS.join(' / ') + '. All three are fully deterministic: the same position and ' +
+  'tier always produce the same action. APPRENTICE (the default) is the original bounded two-ply heuristic: ' +
+  'it enumerates its own legal actions (at most ' + AI_ACTION_LIMIT + '), takes an immediate core capture, ' +
+  'avoids handing you one, then scores core damage, blade captures, contact potential, exposed control and ' +
+  'fold-token conservation, breaking ties on the smallest action key. It cannot plan combinations. ' +
+  'ARTISAN searches up to ' + SEARCH_BUDGETS.ARTISAN.depth + ' plies deep within ' + SEARCH_BUDGETS.ARTISAN.nodes +
+  ' nodes; MASTER searches up to ' + SEARCH_BUDGETS.MASTER.depth + ' plies within ' + SEARCH_BUDGETS.MASTER.nodes +
+  ' nodes and also prices core-contact threats and strike mobility. Both plan forced combinations, but they ' +
+  'are bounded searches, not perfect play, and a MASTER turn can take a second or two on slow devices. ' +
+  'The choice applies from the next machine turn and is stored only on this device.';
 ui.history = loadHistory();
 renderHistory();
 startGame(1, 'SOLO');

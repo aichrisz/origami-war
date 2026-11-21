@@ -2125,6 +2125,22 @@ test('pause suspends a pending machine reply and resumes it only after the dialo
   ok(/\$\('pause-dialog'\)\.addEventListener\('close', resumeAfterPause\)/.test(html), 'all dialog close paths must resume consistently');
 });
 
+test('the difficulty selector is labelled, persisted, solo-only and wired to the tiers', () => {
+  const html = readShipped('index.html');
+  ok(/id="difficulty-fieldset"/.test(html), 'the difficulty fieldset exists');
+  ok(/<legend>Machine difficulty<\/legend>/.test(html), 'the difficulty group is labelled');
+  for (const tier of ['APPRENTICE', 'ARTISAN', 'MASTER']) {
+    ok(new RegExp('name="difficulty" value="' + tier + '"').test(html), 'a radio exists for ' + tier);
+    bump('ui_difficulty_scans');
+  }
+  ok(/origami-war\/difficulty\/v1/.test(html), 'the choice persists under a versioned local key');
+  ok(/function loadDifficulty\(\)[\s\S]*?try[\s\S]*?catch/.test(html), 'loading tolerates unavailable or corrupt storage');
+  ok(/aiExplain\(ui\.state, ui\.difficulty\)/.test(html), 'the machine explanation uses the selected tier');
+  ok(/chooseAction\(ui\.state, ui\.difficulty\)/.test(html), 'the machine action uses the selected tier');
+  ok(/input\.disabled = !solo/.test(html), 'the selector is disabled outside solo mode');
+  ok(/AI_TIERS/.test(html) && /SEARCH_BUDGETS/.test(html), 'the help note is built from the declared registry');
+});
+
 test('index.html drives the real engine rules, not a decorative mock', () => {
   const html = readShipped('index.html');
   for (const symbol of [
@@ -2144,6 +2160,8 @@ test('index.html drives the real engine rules, not a decorative mock', () => {
     'matchRecord',
     'pushMatchRecord',
     'aiExplain',
+    'AI_TIERS',
+    'SEARCH_BUDGETS',
     'TURN_CAP',
     'HISTORY_LIMIT',
   ]) {

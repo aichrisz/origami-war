@@ -619,3 +619,47 @@ MASTER W-L-D: 8-0-0
 
 Gate `masterWins > apprenticeWins` passes: 8 > 0. Every win was a core capture,
 not a cap comparison. This is a bounded sweep, not a claim of perfect play.
+
+---
+
+## RED 27 — difficulty selector scans (UI wiring)
+
+- UTC: 2026-11-21T05:42:00Z
+- Command: `node verify.mjs`
+- Exit code: 1
+
+```
+FAILED the difficulty selector is labelled, persisted, solo-only and wired to the tiers
+  the difficulty fieldset exists
+FAILED index.html drives the real engine rules, not a decorative mock
+  the interface must use engine.AI_TIERS
+RESULT: FAIL (2 failing, 151 passing)
+```
+
+Expected: the interface had no difficulty control and did not import the tier
+registry. During GREEN, one write-pipeline secret scrub false-positived on the
+no-space form `DIFFICULTY_KEY='***'` and replaced the storage key with
+`'***'`; the spaced form (matching HISTORY_KEY's style) writes cleanly. The
+key is a local storage namespace, not a credential.
+
+---
+
+## GREEN — accessible difficulty selector, browser-proven
+
+- UTC: 2026-11-21T05:42:00Z
+- Command: `node verify.mjs`
+- Exit code: 0
+- Result: `RESULT: PASS (153 passing, 0 failing)`; ui_difficulty_scans=3,
+  ui_engine_wiring_scans=20.
+
+Browser proof (headless Chromium against a local server, one continuous tab):
+- Fresh load: APPRENTICE checked by default, fieldset labelled, three radios.
+- Selecting MASTER stores `origami-war/difficulty/v1 = MASTER`; after
+  `location.reload()` MASTER is still checked and stored.
+- Seed 1 solo, MASTER: machine replied within ~4 s with the honest account
+  "Machine (MASTER) searched 6000 node(s) to depth 5, marked 0 unsafe, and
+  played Fy2l." - the budget exhausted mid-depth-6 and kept the completed
+  depth-5 choice, exactly as designed. Zero page errors.
+- PASS mode disables all three difficulty radios; SOLO re-enables them.
+- The decision note applies from the next machine turn; pause/resume scans
+  stay green (timer cancellation unchanged).
