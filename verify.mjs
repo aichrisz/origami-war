@@ -1692,6 +1692,208 @@ test('the default tier is APPRENTICE and reproduces the legacy machine exactly',
   }
 });
 
+// --- RED 21-24, 26: combination planning, determinism, budgets, terminals ---
+
+/** Forced-win probe position: Fy2l threatens the 1-integrity core unstoppably. */
+function comboGame(dCell) {
+  return manualGame({
+    units: [
+      { id: 'A', owner: 'V', kind: 'CORE', cell: E.cellId(2, 0), alive: true, integrity: 2 },
+      { id: 'B', owner: 'V', kind: 'BLADE', cell: E.cellId(4, 3), alive: true, integrity: 0 },
+      { id: 'C', owner: 'V', kind: 'BLADE', cell: E.cellId(1, 0), alive: true, integrity: 0 },
+      { id: 'D', owner: 'V', kind: 'BLADE', cell: dCell, alive: true, integrity: 0 },
+      { id: 'E', owner: 'I', kind: 'CORE', cell: E.cellId(2, 3), alive: true, integrity: 1 },
+      { id: 'F', owner: 'I', kind: 'BLADE', cell: E.cellId(4, 4), alive: true, integrity: 0 },
+      { id: 'G', owner: 'I', kind: 'BLADE', cell: E.cellId(4, 0), alive: true, integrity: 0 },
+      { id: 'H', owner: 'I', kind: 'BLADE', cell: E.cellId(0, 4), alive: true, integrity: 0 },
+    ],
+    tokens: { V: 3, I: 0 },
+  });
+}
+
+function immediateCoreWins(state, side) {
+  return E.legalActions(state).filter((a) => {
+    const n = E.commitAction(state, a);
+    return n.status === 'DONE' && n.reason === 'CORE' && n.outcome === side;
+  });
+}
+
+/** Does this action force a core win against every opponent reply? */
+function preservesForcedWin(state, action, side) {
+  const after = E.commitAction(state, action);
+  if (after.status === 'DONE') return after.reason === 'CORE' && after.outcome === side;
+  const replies = E.legalActions(after);
+  if (replies.length === 0) return false;
+  return replies.every((reply) => {
+    const r = E.commitAction(after, reply);
+    if (r.status === 'DONE') return r.reason === 'CORE' && r.outcome === side;
+    return immediateCoreWins(r, side).length > 0;
+  });
+}
+
+test('search tiers find a forced three-ply combination the legacy machine misses', () => {
+  const state = comboGame(E.cellId(0, 3));
+  const fold = { type: 'FOLD', axis: 'y', crease: 2, direction: 'low' };
+  deepEq(E.checkAction(state, fold), { ok: true }, 'the combination fold is legal');
+  ok(preservesForcedWin(state, fold, 'V'), 'Fy2l really forces a core win against every reply');
+  const legacy = E.chooseAction(state);
+  ok(!preservesForcedWin(state, legacy, 'V'), 'the legacy two-ply machine misses the combination');
+  for (const tier of ['ARTISAN', 'MASTER']) {
+    const action = E.chooseAction(state, tier);
+    ok(preservesForcedWin(state, action, 'V'), tier + ' finds a move that forces the win');
+    bump('combination_checks');
+  }
+});
+
+test('search tiers are pure functions of state and tier', () => {
+  for (let seed = 0; seed < 6; seed++) {
+    const a = E.createGame(seed, 'SOLO');
+    const b = E.createGame(seed, 'SOLO');
+    for (const tier of ['ARTISAN', 'MASTER']) {
+      const first = E.chooseAction(a, tier);
+      deepEq(E.chooseAction(a, tier), first, 'repeated calls agree');
+      deepEq(E.chooseAction(b, tier), first, 'an identically rebuilt state agrees');
+      deepEq(E.aiExplain(a, tier).chosen, E.actionKey(first));
+      bump('search_determinism_checks');
+    }
+  }
+});
+
+test('searchExplain validates its limits', () => {
+  const s = E.createGame(1, 'SOLO');
+  const bad = [
+    { depth: 1, nodes: 100 }, { depth: 13, nodes: 100 },
+    { depth: 4, nodes: 0 }, { depth: 4, nodes: 200001 },
+    { depth: 4.5, nodes: 100 }, { depth: 4, nodes: 10.5 },
+    null, {},
+  ];
+  for (const limits of bad) {
+    throws(() => E.searchExplain(s, limits), 'bad limits refused: ' + JSON.stringify(limits));
+  }
+});
+
+test('search stays inside its declared node budget and depth', () => {
+  for (const tier of ['ARTISAN', 'MASTER']) {
+    const limits = E.SEARCH_BUDGETS[tier];
+    for (let seed = 0; seed < 3; seed++) {
+      const ex = E.searchExplain(E.createGame(seed, 'SOLO'), limits);
+      ok(ex.nodes <= limits.nodes, tier + ' nodes within budget');
+      ok(ex.depth >= 2 && ex.depth <= limits.depth, tier + ' completed depth within bounds');
+      eq(ex.budget, limits.nodes, 'the budget is reported honestly');
+      eq(ex.scores.length, ex.considered, 'every root action is accounted for');
+      ok(ex.scores.every((x) => typeof x.key === 'string' && Number.isInteger(x.score)), 'integer search scores only');
+      ok(ex.scores.some((x) => x.key === ex.chosen), 'the chosen action is among the scores');
+      bump('search_budget_checks');
+    }
+  }
+});
+
+test('an exhausted budget still returns a legal, deterministic fallback', () => {
+  const s = E.createGame(2, 'SOLO');
+  const ex = E.searchExplain(s, { depth: 6, nodes: 1 });
+  eq(ex.depth, 1, 'no full depth completed, fallback depth reported');
+  ok(ex.nodes <= 1, 'the fallback respects the tiny budget');
+  const action = E.decodeAction(ex.chosen);
+  deepEq(E.checkAction(s, action), { ok: true }, 'the fallback action is legal');
+  deepEq(E.searchExplain(s, { depth: 6, nodes: 1 }).chosen, ex.chosen, 'the fallback is deterministic');
+});
+
+test('a forced single root action is returned unchanged', () => {
+  const state = manualGame({
+    tokens: { V: 0, I: 3 },
+    units: manualGame().units.map((u) => (u.id === 'H' ? { ...u, cell: E.cellId(1, 2) } : u)),
+  });
+  const keys = E.legalActions(state).map(E.actionKey);
+  deepEq(keys, ['SCH'], 'exactly one legal action exists');
+  for (const tier of ['ARTISAN', 'MASTER']) {
+    deepEq(E.chooseAction(state, tier), { type: 'STRIKE', attacker: 'C', target: 'H' }, tier + ' plays the only action');
+  }
+});
+
+test('search tiers never propose illegal actions across seed sweeps', () => {
+  for (const [tier, seeds] of [['ARTISAN', 4], ['MASTER', 2]]) {
+    for (let seed = 0; seed < seeds; seed++) {
+      let state = E.createGame(seed, 'SOLO');
+      while (state.status === 'ACTIVE') {
+        const action = E.chooseAction(state, tier);
+        deepEq(E.checkAction(state, action), { ok: true }, tier + ' seed ' + seed + ' turn ' + state.turn);
+        state = E.commitAction(state, action);
+        bump('search_actions_checked');
+      }
+      ok(state.turn <= E.TURN_CAP, tier + ' seed ' + seed + ' respects the cap');
+    }
+  }
+});
+
+test('search tiers refuse to move in a finished match', () => {
+  const done = manualGame({ status: 'DONE', outcome: 'V', reason: 'CORE' });
+  for (const tier of ['ARTISAN', 'MASTER']) {
+    throws(() => E.chooseAction(done, tier), tier + ' refuses a finished match');
+    throws(() => E.aiExplain(done, tier), tier + ' explanation refuses a finished match');
+  }
+  throws(() => E.searchExplain(done, { depth: 4, nodes: 100 }), 'searchExplain refuses a finished match');
+});
+
+test('search prefers the faster core win', () => {
+  const state = comboGame(E.cellId(1, 3));
+  ok(immediateCoreWins(state, 'V').length > 0, 'an immediate core win exists');
+  const fold = { type: 'FOLD', axis: 'y', crease: 2, direction: 'low' };
+  ok(preservesForcedWin(state, fold, 'V'), 'the slower three-ply combination also exists');
+  for (const tier of ['ARTISAN', 'MASTER']) {
+    deepEq(E.chooseAction(state, tier), { type: 'STRIKE', attacker: 'D', target: 'E' }, tier + ' takes the one-ply win');
+    bump('faster_win_checks');
+  }
+});
+
+test('search scores cap endings exactly as decideCap rules them', () => {
+  // Legacy self-play stalemates well before the cap (fold tokens run out), so
+  // the pre-cap ply is constructed directly: a legal manual state at turn 23.
+  const found = manualGame({ turn: E.TURN_CAP - 1 });
+  eq(found.status, 'ACTIVE');
+  const ex = E.searchExplain(found, { depth: 2, nodes: 2000 });
+  let checked = 0;
+  for (const entry of ex.scores) {
+    const child = E.commitAction(found, E.decodeAction(entry.key));
+    if (child.status !== 'DONE' || child.reason !== 'CAP') continue;
+    const winner = E.decideCap(child);
+    if (winner === found.toMove) ok(entry.score > 0, entry.key + ' cap win scores positive');
+    else ok(entry.score < 0, entry.key + ' cap loss scores negative');
+    checked++;
+  }
+  ok(checked > 0, 'at least one cap ending was scored');
+  bump('cap_agreement_checks', checked);
+});
+
+test('the search transition is rule-identical to commitAction on every field search reads', () => {
+  // commitSearch skips only the history snapshot; every rules field must match
+  // commitAction exactly, across seeds, turns and every legal action.
+  for (let seed = 0; seed < 12; seed++) {
+    let state = E.createGame(seed, 'SOLO');
+    while (state.status === 'ACTIVE') {
+      for (const action of E.legalActions(state)) {
+        const full = E.commitAction(state, action);
+        const fast = E.commitSearch(state, action);
+        deepEq({ ...fast, history: [] }, { ...full, history: [] }, 'seed ' + seed + ' turn ' + state.turn + ' ' + E.actionKey(action));
+        bump('search_transition_equivalence_checks');
+      }
+      state = E.commitAction(state, E.legalActions(state)[0]);
+    }
+  }
+});
+
+test('aiExplain reports the tier and a search account for search tiers', () => {
+  const s = E.createGame(3, 'SOLO');
+  for (const tier of ['ARTISAN', 'MASTER']) {
+    const ex = E.aiExplain(s, tier);
+    eq(ex.tier, tier, 'the tier is reported');
+    eq(ex.side, s.toMove);
+    ok(Array.isArray(ex.winning) && Array.isArray(ex.unsafe), 'winning/unsafe lists keep their meaning');
+    ok(Number.isInteger(ex.nodes) && Number.isInteger(ex.depth));
+    eq(ex.budget, E.SEARCH_BUDGETS[tier].nodes);
+    ok(ex.scores.some((x) => x.key === ex.chosen));
+  }
+});
+
 // ------------------- slice 16: static scans of the shipped, dependency-free files
 const ROOT = new URL('./', import.meta.url);
 

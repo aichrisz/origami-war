@@ -415,6 +415,16 @@ export function legalStrikes(state) {
   return strikes;
 }
 
+/** Unit roster after a legal strike: blades captured, core integrity decremented. */
+function strikeUnits(state, action) {
+  return state.units.map((unit) => {
+    if (unit.id !== action.target) return { ...unit };
+    if (unit.kind === 'BLADE') return { ...unit, alive: false };
+    const integrity = unit.integrity - 1;
+    return { ...unit, integrity, alive: integrity > 0 };
+  });
+}
+
 /**
  * Commit a strike. A blade strike captures the blade; a core strike removes one
  * integrity and captures the core at integrity 0. Topology is never touched.
@@ -423,12 +433,7 @@ export function legalStrikes(state) {
 export function strikeState(state, action) {
   const verdict = checkStrike(state, action);
   if (!verdict.ok) throw new Error('illegal strike: ' + verdict.reason);
-  const units = state.units.map((unit) => {
-    if (unit.id !== action.target) return { ...unit };
-    if (unit.kind === 'BLADE') return { ...unit, alive: false };
-    const integrity = unit.integrity - 1;
-    return { ...unit, integrity, alive: integrity > 0 };
-  });
+  const units = strikeUnits(state, action);
   const record = deepFreeze({
     type: 'STRIKE',
     attacker: action.attacker,
@@ -517,6 +522,26 @@ export function commitAction(state, action) {
     next.tokens = { ...state.tokens, [state.toMove]: state.tokens[state.toMove] - 1 };
   } else {
     next = strikeState(state, action);
+  }
+  next.turn = state.turn + 1;
+  next.toMove = other(state.toMove);
+  return settleTermination(next);
+}
+
+/**
+ * History-free commit for search: the same rules assembly as commitAction
+ * (foldCells / strikeUnits / token spend / turn pass / settleTermination)
+ * without the undo snapshot, which search never reads. The equivalence sweep
+ * in verify.mjs proves every rules field matches commitAction exactly.
+ * Callers pass only legal actions (legalActions output).
+ */
+export function commitSearch(state, action) {
+  let next;
+  if (action.type === 'FOLD') {
+    next = { ...state, cells: foldCells(state.cells, action) };
+    next.tokens = { ...state.tokens, [state.toMove]: state.tokens[state.toMove] - 1 };
+  } else {
+    next = { ...state, units: strikeUnits(state, action) };
   }
   next.turn = state.turn + 1;
   next.toMove = other(state.toMove);
@@ -735,11 +760,16 @@ export function actionKey(action) {
 
 // --------------------------------------------------------------------- the AI
 //
-// Honest description: this is a bounded two-ply heuristic, not a deep search.
-// It enumerates its own legal actions, plays each one, and looks exactly one
-// opponent reply deep - only far enough to notice an immediate core capture.
-// Everything else is a static integer score. It does not plan multi-move
-// combinations and it cannot see beyond that single reply.
+// Honest description, per tier:
+// - APPRENTICE (default) is a bounded two-ply heuristic, not a deep search. It
+//   enumerates its own legal actions, plays each one, and looks exactly one
+//   opponent reply deep - only far enough to notice an immediate core capture.
+//   Everything else is a static integer score. It does not plan multi-move
+//   combinations and it cannot see beyond that single reply.
+// - ARTISAN and MASTER run the combination-planning search below: negamax with
+//   alpha-beta and iterative deepening inside declared node budgets. They see
+//   forced combinations several plies deep, but they are bounded searches, not
+//   perfect play, and they stay deterministic.
 
 /** Hard cap on the AI's own branching factor. */
 export const AI_ACTION_LIMIT = 64;
@@ -758,11 +788,6 @@ export const SEARCH_BUDGETS = Object.freeze({
 
 function assertTier(tier) {
   if (!AI_TIERS.includes(tier)) throw new Error('unknown tier ' + tier);
-}
-
-// Search tiers land in the next TDD slice; until then they refuse honestly.
-function searchExplainPrivate(state, limits, tier) {
-  throw new Error('search tiers are not implemented yet');
 }
 
 function coreOf(state, side) {
@@ -825,7 +850,7 @@ function scoreAfter(state, side) {
  */
 export function aiExplain(state, tier = 'APPRENTICE') {
   assertTier(tier);
-  if (tier !== 'APPRENTICE') return searchExplainPrivate(state, SEARCH_BUDGETS[tier], tier);
+  if (tier !== 'APPRENTICE') return { ...searchAccount(state, SEARCH_BUDGETS[tier], tier === 'MASTER'), tier };
   const side = state.toMove;
   const actions = legalActions(state).slice(0, AI_ACTION_LIMIT);
   if (actions.length === 0) throw new Error('no legal action to choose');
@@ -856,6 +881,198 @@ export function chooseAction(state, tier = 'APPRENTICE') {
   const action = legalActions(state).slice(0, AI_ACTION_LIMIT).find((a) => actionKey(a) === explained.chosen);
   if (!action) throw new Error('ai failed to resolve its own choice');
   return action;
+}
+
+// ------------------------------------------------- combination-planning search
+//
+// ARTISAN and MASTER search the same pure commitAction transition the rules
+// use: negamax with alpha-beta pruning and iterative deepening. Deterministic
+// by construction - canonical move ordering, integer scores, count-based node
+// budgets. No clock, no ambient entropy, no parallel rules fast-path.
+
+const SEARCH_WIN_SCORE = 100000;
+const SEARCH_DEPTH_MIN = 2;
+const SEARCH_DEPTH_MAX = 12;
+const SEARCH_NODES_MAX = 200000;
+const BUDGET_SENTINEL = Object.freeze({ budgetExhausted: true });
+
+function assertLimits(limits) {
+  if (!limits || typeof limits !== 'object') throw new Error('bad search limits');
+  if (!Number.isInteger(limits.depth) || limits.depth < SEARCH_DEPTH_MIN || limits.depth > SEARCH_DEPTH_MAX) {
+    throw new Error('bad search depth');
+  }
+  if (!Number.isInteger(limits.nodes) || limits.nodes < 1 || limits.nodes > SEARCH_NODES_MAX) {
+    throw new Error('bad search node budget');
+  }
+}
+
+/**
+ * Terminal score from the side-to-move's perspective. Core wins prefer speed
+ * (100000 - turn); capped/stalemated endings score the exact decideCap
+ * comparison vector - integrity x1000, blades x300, exposed x5, initiative +-1 -
+ * so the search's cap judgments agree with the rules. Weights keep the
+ * lexicographic order: 3 blades x300 < 1000, 25 stacks x5 < 300.
+ */
+function terminalScore(state) {
+  const side = state.toMove;
+  if (state.reason === 'CORE') {
+    const magnitude = SEARCH_WIN_SCORE - state.turn;
+    return state.outcome === side ? magnitude : -magnitude;
+  }
+  const score = capScore(state);
+  const foe = other(side);
+  let value = 1000 * (score[side].integrity - score[foe].integrity)
+    + 300 * (score[side].blades - score[foe].blades)
+    + 5 * (score[side].exposed - score[foe].exposed);
+  if (state.outcome === side) value += 1;
+  else if (state.outcome === foe) value -= 1;
+  return value;
+}
+
+/** Live blades of `side` already in contact with the enemy core. */
+function coreThreat(state, side) {
+  const foeCore = coreOf(state, other(side));
+  if (!foeCore || !foeCore.alive) return 0;
+  let count = 0;
+  for (const unit of state.units) {
+    if (unit.owner === side && unit.kind === 'BLADE' && unit.alive && inContact(state.cells, unit.cell, foeCore.cell)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/**
+ * Integer leaf evaluation from the side-to-move's perspective. Both search
+ * tiers share the legacy static weights; MASTER adds core-contact threats and
+ * strike mobility, the ingredients of combination planning.
+ */
+function evaluate(state, master) {
+  const side = state.toMove;
+  let score = scoreAfter(state, side);
+  if (master) {
+    score += 40 * coreThreat(state, side);
+    score -= 35 * coreThreat(state, other(side));
+    // Mobility: every (own, enemy) contact pair is exactly one legal strike,
+    // so contactPotential already counts strikes without re-enumerating them.
+    score += 6 * contactPotential(state, side);
+    score -= 5 * contactPotential(state, other(side));
+  }
+  return score;
+}
+
+/** Fail-soft negamax with alpha-beta. Throws BUDGET_SENTINEL past the budget. */
+function negamax(state, depth, alpha, beta, ctx) {
+  if (ctx.nodes + 1 > ctx.budget) throw BUDGET_SENTINEL;
+  ctx.nodes += 1;
+  if (state.status === 'DONE') return terminalScore(state);
+  if (depth === 0) return evaluate(state, ctx.master);
+  const actions = legalActions(state).slice(0, AI_ACTION_LIMIT);
+  if (actions.length === 0) return evaluate(state, ctx.master);
+  // One commit per child: order by static score (mover's view) desc, key asc.
+  const children = actions.map((action) => {
+    const child = commitSearch(state, action);
+    return { key: actionKey(action), child, order: -evaluate(child, ctx.master) };
+  });
+  children.sort((a, b) => (b.order - a.order) || (a.key < b.key ? -1 : 1));
+  let best = -Infinity;
+  for (const { child } of children) {
+    const value = -negamax(child, depth - 1, -beta, -alpha, ctx);
+    if (value > best) best = value;
+    if (best > alpha) alpha = best;
+    if (alpha >= beta) break;
+  }
+  return best;
+}
+
+/**
+ * Full search account for one position: iterative deepening from depth 2 up to
+ * limits.depth, sharing one node budget across iterations. The best move of the
+ * last COMPLETED depth is kept; a budget exhausted mid-depth never leaks a
+ * half-searched choice. If no depth completes, a deterministic root fallback
+ * (smallest canonical key, unsearched scores marked 0) still returns a legal
+ * action. Root actions are each searched with a full window, so root scores
+ * are exact minimax values (pruning happens inside the subtrees); ties break
+ * on the smallest canonical key.
+ */
+function searchAccount(state, limits, master) {
+  assertLimits(limits);
+  if (state.status !== 'ACTIVE') throw new Error('no legal action to choose');
+  const side = state.toMove;
+  const rootActions = legalActions(state).slice(0, AI_ACTION_LIMIT);
+  if (rootActions.length === 0) throw new Error('no legal action to choose');
+  const rootKeys = rootActions.map(actionKey);
+  const children = new Map();
+  const winning = [];
+  const unsafe = [];
+  for (const action of rootActions) {
+    const key = actionKey(action);
+    const child = commitSearch(state, action);
+    children.set(key, child);
+    if (child.status === 'DONE' && child.reason === 'CORE' && child.outcome === side) winning.push(key);
+    if (opponentCanCapture(child)) unsafe.push(key);
+  }
+  const ctx = { nodes: 0, budget: limits.nodes, master };
+  let chosen = null;
+  let completedDepth = 1;
+  let rootScores = null;
+  let previousBest = null;
+  for (let depth = 2; depth <= limits.depth; depth++) {
+    const orderValue = new Map(rootKeys.map((key) => [key, -evaluate(children.get(key), master)]));
+    const ordered = [...rootKeys].sort((a, b) => {
+      if (a === previousBest) return -1;
+      if (b === previousBest) return 1;
+      return (orderValue.get(b) - orderValue.get(a)) || (a < b ? -1 : 1);
+    });
+    const scores = [];
+    let bestKey = null;
+    let bestValue = -Infinity;
+    let aborted = false;
+    try {
+      for (const key of ordered) {
+        const value = -negamax(children.get(key), depth - 1, -Infinity, Infinity, ctx);
+        scores.push({ key, score: value });
+        if (value > bestValue || (value === bestValue && (bestKey === null || key < bestKey))) {
+          bestValue = value;
+          bestKey = key;
+        }
+      }
+    } catch (err) {
+      if (err !== BUDGET_SENTINEL) throw err;
+      aborted = true;
+    }
+    if (aborted) break;
+    chosen = bestKey;
+    completedDepth = depth;
+    rootScores = scores;
+    previousBest = bestKey;
+  }
+  if (chosen === null) {
+    chosen = [...rootKeys].sort()[0];
+    rootScores = rootKeys.map((key) => ({ key, score: 0 }));
+    completedDepth = 1;
+  }
+  const byKey = new Map(rootScores.map((entry) => [entry.key, entry.score]));
+  return {
+    side,
+    depth: completedDepth,
+    nodes: ctx.nodes,
+    budget: limits.nodes,
+    considered: rootActions.length,
+    winning,
+    unsafe,
+    scores: rootKeys.map((key) => ({ key, score: byKey.get(key) })),
+    chosen,
+  };
+}
+
+/**
+ * Search with explicit limits and the base evaluation. Same position and
+ * limits always produce the same account. Used by the tiered entry points and
+ * by the test suite to probe budget behaviour directly.
+ */
+export function searchExplain(state, limits) {
+  return searchAccount(state, limits, false);
 }
 
 // ------------------------------------------------------------ log and replay

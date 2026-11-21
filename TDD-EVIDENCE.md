@@ -501,3 +501,71 @@ unchanged (design docs are not dependency tooling).
   points; seeds 0-9 prove `chooseAction`/`aiExplain` with the default tier are
   deep-identical to the legacy calls. Search tiers refuse honestly until the
   next slice (private stub, no public surface yet).
+
+---
+
+## RED 21-24, 26 — search behaviour written before any search code
+
+- UTC: 2026-11-20T23:08:54Z
+- Command: `node verify.mjs`
+- Exit code: 1
+
+```
+FAILED search tiers find a forced three-ply combination the legacy machine misses
+FAILED search tiers are pure functions of state and tier
+FAILED search stays inside its declared node budget and depth
+FAILED an exhausted budget still returns a legal, deterministic fallback
+FAILED a forced single root action is returned unchanged
+FAILED search tiers never propose illegal actions across seed sweeps
+FAILED search prefers the faster core win
+FAILED search scores cap endings exactly as decideCap rules them
+FAILED aiExplain reports the tier and a search account for search tiers
+RESULT: FAIL (9 failing, 139 passing)
+```
+
+Expected: the search tiers still refuse via the Task 1 stub and `searchExplain`
+does not exist. The combination position was probe-verified first: `Fy2l` forces
+a core win against all five Indigo replies (SEA, SEC, SFB, SGB, SHD), while the
+legacy machine plays `SBF` and misses it. The two validation-only tests
+(bad limits, finished match) pass at RED because an undefined function also
+throws; they exercise real validation once the export exists.
+
+---
+
+## GREEN — combination-planning search (RED 21-24, 26 repaired)
+
+- UTC: 2026-11-21T00:53:37Z
+- Command: `node verify.mjs`
+- Exit code: 0
+- Result: `RESULT: PASS (149 passing, 0 failing)`, ~69 s wall on the build host.
+
+First GREEN attempt failed 3 of the new tests; each was a real defect, repaired
+under the same tests (no assertion weakened):
+
+1. MASTER missed the forced combination: fail-soft root scores are BOUNDS under
+   alpha-beta, and a bound can tie the true win score, letting the lexicographic
+   tiebreak pick a non-winning move. Repair: every root action is searched with
+   a full window, so root scores are exact minimax values; pruning stays inside
+   subtrees. combination_checks=2 (both tiers force the win).
+2. Budget fallback reported nodes=2 for budget=1: the counter incremented before
+   the check. Repair: check-before-increment; nodes never exceeds the budget.
+3. Cap-agreement fixture: legacy self-play stalemates around ply 15 (fold tokens
+   run out), so no seed reaches ply 23. Repair: construct the pre-cap ply
+   directly (manual state at TURN_CAP-1); cap_agreement_checks=8, all signs
+   match decideCap.
+
+Performance repair (RED 24b, equivalence test written first and watched fail):
+commitAction builds a deep-frozen undo snapshot per child - dead weight in
+search. Added `commitSearch`, a history-free commit sharing the same rule
+primitives (foldCells, extracted strikeUnits, token spend, settleTermination).
+`search_transition_equivalence_checks=612`: every rules field matches
+commitAction exactly across 12 seeds x every legal action at every turn.
+MASTER mobility term uses contactPotential (provably the legal-strike count)
+instead of re-enumerating strikes. Suite runtime 162 s -> 69 s; sweep sizes
+trimmed (determinism 6 seeds, budgets 3 seeds, legality 4 ARTISAN + 2 MASTER
+games, search_actions_checked=47, all legal).
+
+Verified accounts: search_determinism_checks=12, search_budget_checks=6,
+faster_win_checks=2 (one-ply win preferred over the three-ply combination),
+single forced root action returned unchanged, finished matches throw for every
+tier, bad limits refused.
